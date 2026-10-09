@@ -11,7 +11,8 @@ from .sheetutil import CELL_RE
 class Change:
     sheet: str
     cell: str
-    new_value: str
+    new_value: object            # str, ya da tarih için datetime.date
+    number_format: str | None = None
 
 
 def parse_change(spec: str) -> Change:
@@ -32,7 +33,7 @@ def _show(v) -> str:
 
 def evaluate(backend, ch: Change) -> dict:
     """Bir değişikliğin yapılabilir olup olmadığını denetler. kind: ok | refused | failed | unchanged."""
-    if ch.new_value.startswith("="):
+    if isinstance(ch.new_value, str) and ch.new_value.startswith("="):
         return {"kind": "refused", "reason": "formula-value",
                 "message": "'=' ile başlayan değer (formül) bu araçla yazılamaz."}
     try:
@@ -41,7 +42,7 @@ def evaluate(backend, ch: Change) -> dict:
         return {"kind": "failed", "stage": "read", "message": f"okunamadı ({e})"}
     if is_formula:
         return {"kind": "refused", "reason": "cell-has-formula", "message": "hücre formül içeriyor; üzerine yazılmaz."}
-    if str(old if old is not None else "") == ch.new_value:
+    if isinstance(ch.new_value, str) and str(old if old is not None else "") == ch.new_value:
         return {"kind": "unchanged", "old": old, "message": "değişiklik yok."}
     return {"kind": "ok", "old": old}
 
@@ -56,7 +57,7 @@ def log_evaluation(log, ch: Change, ev: dict) -> None:
 def apply_change(backend, ch: Change, old, log) -> bool:
     """Onaylanmış değişikliği yazar (bellek modunda sahneler) ve kaydeder."""
     try:
-        backend.set_cell(ch.sheet, ch.cell, ch.new_value)
+        backend.set_cell(ch.sheet, ch.cell, ch.new_value, ch.number_format)
     except Exception as e:  # noqa: BLE001
         log.record("failed", sheet=ch.sheet, cell=ch.cell, old=old, new=ch.new_value, error=str(e), stage="write")
         raise

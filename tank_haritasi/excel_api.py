@@ -2,9 +2,19 @@
 from __future__ import annotations
 
 import urllib.parse
+from datetime import date, datetime
 
 from .graph import GraphClient, GraphError
 from .sheetutil import grid_to_cells
+
+
+def _excel_value(v):
+    """Tarihler Excel seri numarası olarak gönderilir (gerçek tarih hücresi olsun diye)."""
+    if isinstance(v, datetime):
+        return (v - datetime(1899, 12, 30)).total_seconds() / 86400
+    if isinstance(v, date):
+        return (v - date(1899, 12, 30)).days
+    return v
 
 
 class ExcelApiBackend:
@@ -60,9 +70,16 @@ class ExcelApiBackend:
         formula = r["formulas"][0][0]
         return r["values"][0][0], isinstance(formula, str) and formula.startswith("=")
 
-    def set_cell(self, sheet: str, cell: str, value: str) -> None:
-        self.c.request("PATCH", f"{self._ws(sheet)}/range(address='{cell}')", headers=self._h(),
-                       json={"values": [[value]]})
+    def get_number_format(self, sheet: str, cell: str) -> str:
+        r = self.c.request("GET", f"{self._ws(sheet)}/range(address='{cell}')", headers=self._h(),
+                           params={"$select": "numberFormat"}).json()
+        return r["numberFormat"][0][0]
+
+    def set_cell(self, sheet: str, cell: str, value, number_format: str | None = None) -> None:
+        body: dict = {"values": [[_excel_value(value)]]}
+        if number_format:
+            body["numberFormat"] = [[number_format]]
+        self.c.request("PATCH", f"{self._ws(sheet)}/range(address='{cell}')", headers=self._h(), json=body)
 
 
 def probe(client: GraphClient, item_id: str) -> tuple[bool, list[tuple[bool, str]]]:

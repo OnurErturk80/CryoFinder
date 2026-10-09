@@ -28,6 +28,11 @@ def fold(v) -> str:
     return re.sub(r"\s+", " ", str(v).strip().translate(_TR).upper())
 
 
+def tr_upper(s: str) -> str:
+    """Türkçe büyük harf: i→İ, ı→I (haritadaki isimler büyük harfle yazılıyor)."""
+    return s.strip().replace("i", "İ").replace("ı", "I").upper()
+
+
 def vial_text(straw_type: str, color: str) -> str:
     """Kullanıcının yazdığı biçim: '1 CRYOLOCKSARI', '1 VİTRİFİTMAVİ'."""
     return f"1 {straw_type}{color}"
@@ -56,6 +61,7 @@ class Row:
     occupied: bool
     color: str | None
     vial: str
+    date_text: str = ""
 
 
 @dataclass
@@ -156,7 +162,8 @@ def scan_sheet(sheet: str, cells: dict[tuple[int, int], object]) -> list[Positio
                 out.append(pos)
             vial = text.get((r, cols["vial"]), "")
             occupied = any(text.get((r, cols[f]), "") for f in ("soyad", "ad", "hucre", "vial"))
-            pos.rows.append(Row(r, {f: (r, cols[f]) for f in FIELDS}, occupied, vial_color(vial), vial))
+            pos.rows.append(Row(r, {f: (r, cols[f]) for f in FIELDS}, occupied, vial_color(vial), vial,
+                                text.get((r, cols["tarih"]), "")))
             prev = (r, key)
     return out
 

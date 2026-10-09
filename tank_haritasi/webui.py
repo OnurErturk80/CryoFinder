@@ -70,6 +70,8 @@ def make_server(service: EditService, log_path, port: int = 0) -> tuple[Threadin
                                                   q.get("fresh") == "1"))
                 elif url.path == "/api/search":
                     self._json({"hits": service.search(q.get("q", ""))})
+                elif url.path == "/api/reg/options":
+                    self._json(service.reg_options())
                 elif url.path == "/api/log":
                     self._json({"lines": service.recent_log(log_path)})
                 else:
@@ -92,6 +94,13 @@ def make_server(service: EditService, log_path, port: int = 0) -> tuple[Threadin
                     self._json(service.propose(body["sheet"], body["cell"], body.get("value", "")))
                 elif url.path == "/api/apply":
                     self._json(service.apply(body["id"]))
+                elif url.path == "/api/reg/suggest":
+                    self._json(service.reg_suggest(int(body["tank"]), int(body["n"]), str(body.get("kat", "otomatik"))))
+                elif url.path == "/api/reg/preview":
+                    self._json(service.reg_preview(str(body["plan_id"]), str(body["straw_type"]),
+                                                   list(body["straws"]), dict(body["patient"])))
+                elif url.path == "/api/reg/apply":
+                    self._json(service.reg_apply(str(body["id"])))
                 elif url.path == "/api/decline":
                     self._json(service.decline(body["id"]))
                 elif url.path == "/api/commit/prepare":
@@ -119,7 +128,7 @@ PAGE = r"""<!doctype html>
 <style>
 :root{--bg:#f6f7f9;--fg:#1c2330;--mut:#667085;--line:#d9dde4;--card:#fff;--acc:#1a56db;--ok:#067647;--bad:#b42318;--warn:#fef0c7}
 @media(prefers-color-scheme:dark){:root{--bg:#10141b;--fg:#e6e9ef;--mut:#98a2b3;--line:#2a3140;--card:#181d27;--acc:#6ea0ff;--ok:#47cd89;--bad:#f97066;--warn:#3a2f10}}
-*{box-sizing:border-box}body{margin:0;font:14px/1.45 system-ui,sans-serif;background:var(--bg);color:var(--fg)}
+*{box-sizing:border-box}[hidden]{display:none!important}body{margin:0;font:14px/1.45 system-ui,sans-serif;background:var(--bg);color:var(--fg)}
 header{display:flex;gap:12px;align-items:center;flex-wrap:wrap;padding:10px 16px;background:var(--card);border-bottom:1px solid var(--line)}
 header b{font-size:15px}.pill{padding:2px 8px;border-radius:99px;border:1px solid var(--line);color:var(--mut);font-size:12px}
 .prod{background:var(--bad);color:#fff;border-color:var(--bad)}
@@ -142,10 +151,10 @@ td.c{cursor:pointer}td.c:hover{outline:2px solid var(--acc);outline-offset:-2px}
 #results{max-height:160px;overflow:auto;margin-bottom:8px}#results div{padding:3px 6px;cursor:pointer;border-radius:6px}#results div:hover{background:var(--bg)}
 pre{white-space:pre-wrap;font-size:11px;color:var(--mut);max-height:180px;overflow:auto;margin:0}
 </style></head><body>
-<header><b id="file">…</b><span class="pill" id="mode"></span><span class="pill prod" id="prod" hidden>GERÇEK DOSYA</span>
+<header><b id="file">…</b><button id="tabMap" class="p">Harita</button><button id="tabReg">Yeni hasta</button><span class="pill" id="mode"></span><span class="pill prod" id="prod" hidden>GERÇEK DOSYA</span>
 <span class="pill" id="bk"></span><span style="flex:1"></span><span id="pend" class="mut"></span>
 <button class="p" id="commit" hidden>OneDrive'a yükle…</button></header>
-<main>
+<main id="mapView">
 <section class="card">
   <div class="bar"><select id="sheet"></select><input id="q" placeholder="Ara (en az 2 harf)…" size="22">
    <button id="refresh">Yenile</button><button id="prev">◀</button><button id="next">▶</button><span class="mut" id="range"></span></div>
@@ -169,6 +178,36 @@ pre{white-space:pre-wrap;font-size:11px;color:var(--mut);max-height:180px;overfl
   <div id="msg" style="margin-top:10px"></div>
   <h4>Son kayıtlar</h4><pre id="log"></pre>
 </aside></main>
+<main id="regView" hidden style="grid-template-columns:1fr">
+<section class="card">
+  <h3 style="margin-top:0">1) Yer öner</h3>
+  <div class="bar">
+    <label>Tank <select id="rTank"></select></label>
+    <label>Straw sayısı <input id="rN" type="number" min="1" max="12" value="2" style="width:70px"></label>
+    <label>Tür <select id="rType"></select></label>
+    <label>Kat <select id="rKat"><option value="otomatik">Otomatik (önce alt)</option><option value="alt">Yalnız alt</option><option value="ust">Yalnız üst</option></select></label>
+    <button class="p" id="rSuggest">Yer öner</button>
+  </div>
+  <div id="rPlans"></div>
+</section>
+<section class="card" id="rStep2" hidden>
+  <h3 style="margin-top:0">2) Straw renkleri ve hasta bilgileri</h3>
+  <table id="rStraws"></table>
+  <div class="bar" style="margin-top:10px">
+    <label>Soyad <input id="pSoyad" size="16"></label><label>Ad <input id="pAd" size="16"></label>
+    <label>Eşi <input id="pEsi" size="16" placeholder="(isteğe bağlı)"></label>
+    <label>Tarih <input id="pDate" type="date"></label>
+    <button class="p" id="rPreview">Önizle</button>
+  </div>
+</section>
+<section class="card" id="rStep3" hidden>
+  <h3 style="margin-top:0">3) Onay</h3>
+  <div style="max-height:260px;overflow:auto"><table id="rChanges"></table></div>
+  <div class="mut" style="margin:8px 0">Onaylarsanız önce OneDrive'daki <b>Yedekler</b> klasörüne yedek alınır, sonra yukarıdaki hücreler yazılır.</div>
+  <button class="p" id="rApply">Onayla ve yaz</button> <button id="rCancel">Vazgeç</button>
+  <div id="rMsg" style="margin-top:10px"></div>
+</section>
+</main>
 <script>
 const TOKEN="__TOKEN__";const $=id=>document.getElementById(id);
 async function api(path,body){
@@ -213,5 +252,42 @@ $("sheet").onchange=()=>{row0=1;loadSheet();};$("refresh").onclick=()=>loadSheet
 $("prev").onclick=()=>{row0=Math.max(1,row0-50);loadSheet();};$("next").onclick=()=>{if(view&&row0+50<=view.max_row){row0+=50;loadSheet();}};
 async function logs(){const r=await api("/api/log");$("log").textContent=r.lines.map(l=>{try{const e=JSON.parse(l);
   return e.ts.slice(11,19)+" "+e.event+(e.cell?" "+e.sheet+"!"+e.cell:"");}catch(_){return l;}}).join("\n");}
+/* ---- Yeni hasta */
+let R={plans:[],plan:null,regId:null};
+function show(view){$("mapView").hidden=view!=="map";$("regView").hidden=view!=="reg";
+  $("tabMap").className=view==="map"?"p":"";$("tabReg").className=view==="reg"?"p":"";if(view==="reg")regInit();}
+$("tabMap").onclick=()=>show("map");$("tabReg").onclick=()=>show("reg");
+function rmsg(t,cls){$("rMsg").textContent=t||"";$("rMsg").className=cls||"";}
+async function regInit(){const o=await api("/api/reg/options");const t=$("rTank");const keep=t.value;t.textContent="";
+  o.tanks.forEach(n=>t.add(new Option(`Tank ${n} (${o.free_rows[n]} boş satır)`,n)));if(keep)t.value=keep;
+  const ty=$("rType");if(!ty.options.length)o.types.forEach(x=>ty.add(new Option(x,x)));
+  if(!$("pDate").value){const d=new Date();$("pDate").value=d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0");}}
+function planText(pl){return pl.placements.map(p=>`Canister ${p.canister} / ${p.label} (${p.kat} kat) satır ${p.rows[0]}${p.rows.length>1?"–"+p.rows[p.rows.length-1]:""}: ${p.colors.join(", ")}`).join("  →  ");}
+$("rSuggest").onclick=async()=>{$("rStep2").hidden=true;$("rStep3").hidden=true;const box=$("rPlans");box.textContent="";
+  const r=await api("/api/reg/suggest",{tank:+$("rTank").value,n:+$("rN").value,kat:$("rKat").value});
+  if(!r.ok){box.textContent=r.message;return;}R.plans=r.plans;if(!r.plans.length){box.textContent=r.message;return;}
+  r.plans.forEach((pl,i)=>{const lab=document.createElement("label");lab.style.cssText="display:block;padding:6px;border:1px solid var(--line);border-radius:8px;margin:6px 0;cursor:pointer";
+    const rb=document.createElement("input");rb.type="radio";rb.name="plan";rb.onclick=()=>pickPlan(pl);lab.appendChild(rb);
+    lab.appendChild(document.createTextNode(` ${i+1}. ${planText(pl)}`));box.appendChild(lab);});};
+function pickPlan(pl){R.plan=pl;$("rStep3").hidden=true;$("rStep2").hidden=false;const t=$("rStraws");t.textContent="";
+  const h=t.insertRow();["Konum","Satır","Renk","HÜCRE (örn. D5 (4AA))"].forEach(x=>{const c=document.createElement("th");c.textContent=x;h.appendChild(c);});
+  pl.placements.forEach((p,pi)=>p.rows.forEach((row,ri)=>{const tr=t.insertRow();tr.dataset.p=pi;
+    tr.insertCell().textContent=`Canister ${p.canister} / ${p.label} (${p.kat})`;tr.insertCell().textContent=row;
+    const sel=document.createElement("select");p.free_colors.forEach(c=>sel.add(new Option(c,c)));sel.value=p.colors[ri];tr.insertCell().appendChild(sel);
+    const inp=document.createElement("input");inp.size=22;tr.insertCell().appendChild(inp);}));
+  const ins=[...t.querySelectorAll("input")];  /* ilk HÜCRE metni, elle değiştirilmemiş diğer satırlara kopyalanır */
+  ins.forEach((i,k)=>i.oninput=()=>{if(k>0)i.dataset.touched="1";else ins.slice(1).forEach(o=>{if(!o.dataset.touched)o.value=ins[0].value;});});}
+$("rPreview").onclick=async()=>{rmsg("");const rows=[...$("rStraws").rows].slice(1);
+  const straws=rows.map(tr=>({color:tr.querySelector("select").value,hucre:tr.querySelector("input").value}));
+  const r=await api("/api/reg/preview",{plan_id:R.plan.id,straw_type:$("rType").value,straws,
+    patient:{soyad:$("pSoyad").value,ad:$("pAd").value,esi:$("pEsi").value,tarih:$("pDate").value}});
+  if(!r.ok){$("rStep3").hidden=true;alert(r.message);return;}R.regId=r.id;const t=$("rChanges");t.textContent="";
+  const h=t.insertRow();["Hücre","Eski","Yeni"].forEach(x=>{const c=document.createElement("th");c.textContent=x;h.appendChild(c);});
+  r.changes.forEach(c=>{const tr=t.insertRow();tr.insertCell().textContent=c.where;tr.insertCell().textContent=c.old||"(boş)";tr.insertCell().textContent=c.new;});
+  $("rStep3").hidden=false;};
+$("rApply").onclick=async()=>{$("rApply").disabled=true;const r=await api("/api/reg/apply",{id:R.regId});$("rApply").disabled=false;
+  rmsg(r.message,r.ok?"ok":"bad");if(r.ok){R.regId=null;await state();$("rPlans").textContent="";$("rStep2").hidden=true;
+    $("pSoyad").value=$("pAd").value=$("pEsi").value="";}logs();};
+$("rCancel").onclick=()=>{R.regId=null;$("rStep3").hidden=true;rmsg("Vazgeçildi.");};
 (async()=>{await state();await loadSheet();logs();})();
 </script></body></html>"""

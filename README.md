@@ -39,6 +39,15 @@ değiştirilirse uygulama reddedilir. Gerçek dosya için `--production` (başla
 Güvenlik: oturum anahtarı, Host/Origin denetimi, yalnızca JSON POST; diğer web siteleri arayüzü kullanamaz.
 Hücreler Excel'de göründüğü biçimde (tarihler dahil) gösterilir.
 
+## Yeni hasta kaydı (arayüzde "Yeni hasta" sekmesi)
+Tank, straw sayısı, tür (VİTRİFİT/CRYOLOCK/CRYOTOP) ve kat seçilir; program uygun konumları önerir (alt kat önce).
+Bir konumun 4 satırında renkler (MAVİ, SARI, YEŞİL, TURUNCU) farklıdır; aynı hastanın straw'ları aynı goblette bitişik
+satırlara, sığmazsa komşu gobletlere yerleşir. Renkler seçilebilir; VİAL `1 CRYOLOCKSARI` biçiminde yazılır. Tüm hücre
+değişiklikleri önizlenir ve tek **Onayla** ile (önce yedek) yazılır. Yazmadan hemen önce hedef hücrelerin hâlâ boş olduğu
+yeniden denetlenir. Kat sayfadan belirlenir (adında "üst" geçen sayfa = üst kat). Standart olmayan (4 satırlık olmayan)
+konumlar, TANK 4 ve küçük tank şimdilik desteklenmez. `python3 -m tank_haritasi yerler --detay` haritanın nasıl
+algılandığını (kişi adı göstermeden) özetler.
+
 ## Bellek-içi yöntemin sınırları
 Yükleme öncesi doğrulanır: yalnızca onaylı hücreler değişti mi; grafik/resim/pivot gibi parçalar kaybolacak mı
 (kaybolacaksa yüklenmez). Formüllerin önbellek değerleri Excel açıldığında yeniden hesaplanır.

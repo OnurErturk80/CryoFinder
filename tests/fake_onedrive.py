@@ -14,6 +14,16 @@ def make_xlsx(cells: dict[str, object], sheet="Tank1") -> bytes:
     b = io.BytesIO(); wb.save(b); return b.getvalue()
 
 
+def jv(v):
+    """Gerçek Graph gibi: tarih hücreleri Excel seri numarası olarak döner."""
+    import datetime as dt
+    if isinstance(v, dt.datetime):
+        return (v - dt.datetime(1899, 12, 30)).total_seconds() / 86400
+    if isinstance(v, dt.date):
+        return (v - dt.date(1899, 12, 30)).days
+    return v
+
+
 class Resp:
     def __init__(self, status=200, body=None, content=b""):
         self.status_code, self._body, self.content, self.headers = status, body, content, {}
@@ -100,12 +110,13 @@ class FakeOneDrive:
                 b = io.BytesIO(); wb.save(b)
                 self.items[iid]["data"] = b.getvalue(); self.items[iid]["v"] += 1
                 return Resp(200, {})
-            v = ws[cell].value
-            return Resp(200, {"values": [[v if v is not None else ""]], "formulas": [[v if v is not None else ""]]})
+            v = jv(ws[cell].value)
+            return Resp(200, {"values": [[v if v is not None else ""]], "formulas": [[v if v is not None else ""]],
+                              "numberFormat": [["dd.mm.yyyy"]]})
         m = re.search(r"worksheets/\{(.+?)\}/usedRange", u)
         if m:
             ws = wb[m[1]]
-            grid = [[c.value if c.value is not None else "" for c in row] for row in ws.iter_rows()]
+            grid = [[jv(c.value) if c.value is not None else "" for c in row] for row in ws.iter_rows()]
             return Resp(200, {"address": f"{m[1]}!A1:{ws.dimensions.split(':')[-1]}", "values": grid,
                               "text": [[str(v) for v in row] for row in grid]})
         raise AssertionError(u)

@@ -1,14 +1,17 @@
 """Arayüzün kullandığı iş mantığı. CLI ile aynı güvenlik kuralları: onay, yedek, kayıt, silme yok."""
 from __future__ import annotations
 
+import re
 import secrets
 import threading
 import time
+from datetime import date
 
 from openpyxl.utils.cell import get_column_letter
 
 from .backup import BackupError
 from .editor import Change, apply_change, evaluate, log_evaluation
+from .harita import COLORS, STRAW_TYPES, Position, scan_sheet, suggest, tr_upper, vial_text
 from .sheetutil import CELL_RE
 
 CACHE_TTL = 20.0
@@ -23,6 +26,8 @@ class EditService:
         self.staged: list[Change] = []
         self._cache: dict[str, tuple[float, dict]] = {}
         self._backup_logged = False
+        self._plans: dict[str, object] = {}
+        self._regs: dict[str, list[Change]] = {}
 
     # ---- okuma
     def _cells(self, sheet: str, fresh: bool = False) -> dict:
@@ -155,3 +160,150 @@ class EditService:
             return path.read_text(encoding="utf-8").splitlines()[-n:]
         except FileNotFoundError:
             return []
+
+
+    # ---- yeni hasta kaydı: yer öner → önizle → tek onayla yaz
+    def _scan_all(self) -> list[Position]:
+        out: list[Position] = []
+        for name in self.backend.sheet_names():
+            out += scan_sheet(name, self._cells(name, fresh=True))
+        return out
+
+    def reg_options(self) -> dict:
+        with self.lock:
+            pos = [p for p in self._scan_all() if p.standard and p.tank]
+            tanks = sorted({p.tank for p in pos})
+            return {"tanks": tanks, "types": STRAW_TYPES, "colors": COLORS,
+                    "free_rows": {str(t): sum(len(p.free_rows) for p in pos if p.tank == t) for t in tanks}}
+
+    @staticmethod
+    def _pkey(p: Position) -> tuple:
+        return (p.sheet, p.tank, p.canister, p.label, p.rows[0].row)
+
+    def reg_suggest(self, tank: int, n: int, kat: str) -> dict:
+        if not 1 <= n <= 12:
+            return {"ok": False, "message": "Straw sayısı 1–12 olmalı."}
+        if kat not in ("otomatik", "alt", "ust"):
+            return {"ok": False, "message": "Geçersiz kat."}
+        with self.lock:
+            pool = [p for p in self._scan_all() if p.standard and p.tank == tank
+                    and (kat == "otomatik" or p.kat == ("üst" if kat == "ust" else "alt"))]
+            plans = suggest(pool, n, colored=True, limit=8)
+            self._plans = {}
+            out = []
+            for i, plan in enumerate(plans):
+                pid = f"p{i}"
+                self._plans[pid] = plan
+                out.append({"id": pid, "span": plan.span, "placements": [{
+                    "sheet": pl.position.sheet, "canister": pl.position.canister, "label": pl.position.label,
+                    "kat": pl.position.kat, "rows": [r.row for r in pl.rows], "colors": pl.colors,
+                    "free_colors": pl.position.free_colors, "key": list(self._pkey(pl.position)),
+                    "free_row_count": len(pl.position.free_rows)} for pl in plan.placements]})
+            return {"ok": True, "plans": out,
+                    "message": "" if out else "Bu tankta, seçilen kat ve straw sayısı için uygun yer yok."}
+
+    def _date_format(self, positions: list[Position], sheet: str):
+        for p in positions:
+            if p.sheet == sheet:
+                for r in p.rows:
+                    if r.date_text:
+                        rr, cc = r.cells["tarih"]
+                        try:
+                            return self.backend.get_number_format(sheet, f"{get_column_letter(cc)}{rr}")
+                        except Exception:  # noqa: BLE001 - biçim okunamazsa hücre varsayılanı kalır
+                            return None
+        return None
+
+    def reg_preview(self, plan_id: str, straw_type: str, straws: list[dict], patient: dict) -> dict:
+        with self.lock:
+            plan = self._plans.get(plan_id)
+            if not plan:
+                return {"ok": False, "message": "Öneri süresi dolmuş; yeniden yer önerin."}
+            if straw_type not in STRAW_TYPES:
+                return {"ok": False, "message": "Geçersiz straw türü."}
+            soyad, ad, esi = (tr_upper(str(patient.get(k, ""))) for k in ("soyad", "ad", "esi"))
+            if not soyad or not ad:
+                return {"ok": False, "message": "Soyad ve ad zorunlu."}
+            try:
+                tarih = date.fromisoformat(str(patient.get("tarih", "")))
+            except ValueError:
+                return {"ok": False, "message": "Geçersiz tarih."}
+            for v in (soyad, ad, esi):
+                if len(v) > 60 or v.startswith("=") or re.search(r"[\x00-\x1f]", v):
+                    return {"ok": False, "message": "Ad/soyad geçersiz karakter içeriyor."}
+            fresh = self._scan_all()
+            by_key = {self._pkey(p): p for p in fresh}
+            expected = sum(len(pl.rows) for pl in plan.placements)
+            if len(straws) != expected:
+                return {"ok": False, "message": "Straw sayısı öneriyle uyuşmuyor."}
+            fmt = self._date_format(fresh, plan.placements[0].position.sheet)
+            changes: list[Change] = []
+            i = 0
+            for pl in plan.placements:
+                pos = by_key.get(self._pkey(pl.position))
+                if pos is None:
+                    return {"ok": False, "message": "Harita değişmiş; yeniden yer önerin."}
+                free = {r.row for r in pos.free_rows}
+                colors = []
+                for row in pl.rows:
+                    st = straws[i]; i += 1
+                    color, hucre = st.get("color"), str(st.get("hucre", "")).strip()
+                    if row.row not in free:
+                        return {"ok": False, "message": f"{pos.name}: satır {row.row} artık boş değil. Yeniden yer önerin."}
+                    if color not in COLORS or color in colors or color in pos.used_colors:
+                        return {"ok": False, "message": f"{pos.name}: renk seçimi geçersiz (bu goblette aynı renk iki kez "
+                                                        "olamaz veya renk zaten kullanımda)."}
+                    if not hucre or len(hucre) > 80 or hucre.startswith("=") or re.search(r"[\x00-\x1f]", hucre):
+                        return {"ok": False, "message": "HÜCRE bilgisi boş veya geçersiz."}
+                    colors.append(color)
+                    vals = {"soyad": soyad, "ad": ad, "esi": esi or None, "tarih": tarih, "hucre": hucre,
+                            "vial": vial_text(straw_type, color)}
+                    for f, v in vals.items():
+                        if v is None:
+                            continue
+                        rr, cc = row.cells[f]
+                        changes.append(Change(pos.sheet, f"{get_column_letter(cc)}{rr}", v,
+                                              fmt if f == "tarih" else None))
+            preview = []
+            for ch in changes:
+                ev = evaluate(self.backend, ch)
+                if ev["kind"] not in ("ok", "unchanged") or str(ev.get("old") or "").strip():
+                    return {"ok": False, "message": f"{ch.sheet}!{ch.cell} dolu veya yazılamaz; yeniden yer önerin."}
+                shown = ch.new_value.strftime("%d.%m.%Y") if isinstance(ch.new_value, date) else ch.new_value
+                preview.append({"where": f"{ch.sheet}!{ch.cell}", "old": "", "new": shown})
+            rid = secrets.token_urlsafe(9)
+            self._regs[rid] = changes
+            return {"ok": True, "id": rid, "changes": preview, "count": len(changes)}
+
+    def reg_apply(self, rid: str) -> dict:
+        with self.lock:
+            changes = self._regs.pop(rid, None)
+            if not changes:
+                return {"ok": False, "message": "Bu kayıt artık geçerli değil; yeniden önizleyin."}
+            for ch in changes:                      # yazmadan önce hepsinin hâlâ boş olduğunu doğrula
+                ev = evaluate(self.backend, ch)
+                if ev["kind"] not in ("ok", "unchanged") or str(ev.get("old") or "").strip():
+                    return {"ok": False, "message": "Hedef hücreler siz onaylarken değişmiş. Hiçbir şey yazılmadı; "
+                                                    "yeniden yer önerin."}
+            try:
+                info = self.backuper.ensure()
+            except BackupError as e:
+                return {"ok": False, "message": str(e)}
+            if not self._backup_logged:
+                self.log.record("backup", **info)
+                self._backup_logged = True
+            done = 0
+            for ch in changes:
+                try:
+                    apply_change(self.backend, ch, None, self.log)
+                except Exception as e:  # noqa: BLE001
+                    return {"ok": False, "message": f"{done}/{len(changes)} hücre yazıldıktan sonra hata: {e}. "
+                                                    "Kısmi kayıt olabilir; haritayı kontrol edin (ayrıntı kayıt dosyasında)."}
+                done += 1
+                if self.backend.needs_commit:
+                    self.staged.append(ch)
+            self.log.record("registration", cells=done, backup=info["path"])
+            self._cache.clear()
+            return {"ok": True, "backup": info["path"], "count": done,
+                    "message": "Hazırlandı; 'OneDrive'a yükle' ile tamamlayın." if self.backend.needs_commit
+                    else f"Kayıt yazıldı ({done} hücre)."}

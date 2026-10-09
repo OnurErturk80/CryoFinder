@@ -46,9 +46,14 @@ class MemoryBackend:
         c = self._ws(sheet)[cell]
         return c.value, c.data_type == "f"
 
-    def set_cell(self, sheet: str, cell: str, value: str) -> None:
+    def get_number_format(self, sheet: str, cell: str) -> str:
+        return self._ws(sheet)[cell].number_format
+
+    def set_cell(self, sheet: str, cell: str, value, number_format: str | None = None) -> None:
         ws = self._ws(sheet)
         ws[cell].value = value if value != "" else None
+        if number_format:
+            ws[cell].number_format = number_format
         self.staged[(ws.title, cell)] = value
 
     def serialize(self) -> bytes:

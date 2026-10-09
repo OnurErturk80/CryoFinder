@@ -369,3 +369,111 @@ def test_layout_detail_and_rapidi_not_unknown():
     text = "\n".join(describe_layout("S", cells, ps))
     assert "A1='TANK 1'" in text and "A3='CANISTER 1'" in text and "satır 5–36" in text and "SOYAD" not in text
     assert next(p for p in ps if p.canister == 1 and p.label == "1A").unknown_occupied == 0  # rapidi renksiz, belirsiz değil
+
+
+# ---- yeni hasta kaydı
+def make_map_xlsx(sheet="TANK 5"):
+    from openpyxl import Workbook
+    wb = Workbook(); ws = wb.active; ws.title = sheet
+    for (r, c), v in make_map_cells().items():
+        ws.cell(r, c, v)
+    ws.cell(5, 5, date(2025, 1, 2)); ws.cell(5, 5).number_format = "dd.mm.yyyy"   # biçim referansı (1A'nın ilk satırı)
+    b = io.BytesIO(); wb.save(b); return b.getvalue()
+
+
+from datetime import date
+
+
+def make_reg_service(tmp_path, excel_api=True):
+    fake = FakeOneDrive({PATH: make_map_xlsx()}, excel_api=excel_api)
+    c = GraphClient(lambda: "tok", session=fake, sleep=lambda s: None)
+    if excel_api:
+        be, data = ExcelApiBackend(c, "ID1"), None
+    else:
+        meta, data = onedrive.download_consistent(c, PATH)
+        be = MemoryBackend(c, meta, data)
+    getter = (lambda: data) if data else (lambda: onedrive.download(c, "ID1"))
+    bk = Backuper(c, "Yedekler", PATH, getter, now=lambda: datetime(2026, 10, 9, 12, 0, 0))
+    return fake, EditService(be, bk, logger(tmp_path), PATH)
+
+
+def sheet_of(fake):
+    return load_workbook(io.BytesIO(fake.items["ID1"]["data"]))["TANK 5"]
+
+
+PATIENT = {"soyad": "yılmaz", "ad": "ayşe", "esi": "", "tarih": "2026-10-09"}
+
+
+def test_registration_end_to_end_excel_api(tmp_path):
+    fake, svc = make_reg_service(tmp_path)
+    assert svc.reg_options()["tanks"] == [1]
+    sug = svc.reg_suggest(1, 2, "otomatik")
+    plan = sug["plans"][0]
+    pl = plan["placements"][0]
+    assert len(sug["plans"]) > 0 and plan["span"] == 1 and len(pl["rows"]) == 2
+    straws = [{"color": c, "hucre": "D5 (4AA)"} for c in pl["colors"]]
+    prev = svc.reg_preview(plan["id"], "CRYOLOCK", straws, PATIENT)
+    assert prev["ok"] and prev["count"] == 10                 # 2 straw × (soyad, ad, tarih, hücre, vial)
+    assert not any(v["path"].startswith("Yedekler/T") for v in fake.items.values())   # onaydan önce yazma/yedek yok
+    res = svc.reg_apply(prev["id"])
+    assert res["ok"] and res["backup"].startswith("Yedekler/")
+    ws = sheet_of(fake)
+    r0, r1 = pl["rows"]
+    assert (ws.cell(r0, 2).value, ws.cell(r0, 3).value) == ("YILMAZ", "AYŞE")          # Türkçe büyük harf
+    assert ws.cell(r0, 7).value == f"1 CRYOLOCK{pl['colors'][0]}"
+    assert ws.cell(r1, 7).value == f"1 CRYOLOCK{pl['colors'][1]}" and pl["colors"][0] != pl["colors"][1]
+    assert r1 == r0 + 1                                                                  # yan yana
+    assert ws.cell(r0, 5).value in (46304, 46304.0)                                     # 2026-10-09 Excel seri numarası
+    assert "registration" in (tmp_path / "log.jsonl").read_text(encoding="utf-8")
+    assert not svc.reg_apply(prev["id"])["ok"]                                           # tek kullanımlık
+
+
+def test_registration_validation(tmp_path):
+    fake, svc = make_reg_service(tmp_path)
+    plan = svc.reg_suggest(1, 2, "otomatik")["plans"][0]
+    pl = plan["placements"][0]
+    same = [{"color": pl["colors"][0], "hucre": "D5"}] * 2
+    assert not svc.reg_preview(plan["id"], "CRYOLOCK", same, PATIENT)["ok"]                          # aynı renk iki kez
+    ok = [{"color": c, "hucre": "D5"} for c in pl["colors"]]
+    assert not svc.reg_preview(plan["id"], "CRYOLOCK", ok, {**PATIENT, "soyad": ""})["ok"]           # soyad zorunlu
+    assert not svc.reg_preview(plan["id"], "CRYOLOCK", ok, {**PATIENT, "tarih": "09.10.2026"})["ok"]  # tarih biçimi
+    assert not svc.reg_preview(plan["id"], "BILINMEYEN", ok, PATIENT)["ok"]
+    assert not svc.reg_preview(plan["id"], "CRYOLOCK", [{"color": "MOR", "hucre": "D5"}] * 2, PATIENT)["ok"]
+    assert not svc.reg_preview(plan["id"], "CRYOLOCK", [{"color": c, "hucre": ""} for c in pl["colors"]], PATIENT)["ok"]
+    assert not svc.reg_preview(plan["id"], "CRYOLOCK", [{"color": c, "hucre": "=1+1"} for c in pl["colors"]], PATIENT)["ok"]
+
+
+def test_registration_aborts_if_rows_filled_meanwhile(tmp_path):
+    fake, svc = make_reg_service(tmp_path)
+    plan = svc.reg_suggest(1, 2, "otomatik")["plans"][0]
+    pl = plan["placements"][0]
+    prev = svc.reg_preview(plan["id"], "VİTRİFİT", [{"color": c, "hucre": "D5"} for c in pl["colors"]], PATIENT)
+    wb = load_workbook(io.BytesIO(fake.items["ID1"]["data"]))
+    wb["TANK 5"].cell(pl["rows"][1], 2).value = "BAŞKASI"        # biri aynı satıra yazdı
+    b = io.BytesIO(); wb.save(b); fake.external_edit(PATH, b.getvalue())
+    res = svc.reg_apply(prev["id"])
+    assert not res["ok"] and "Hiçbir şey yazılmadı" in res["message"]
+    assert sheet_of(fake).cell(pl["rows"][0], 2).value is None
+
+
+def test_registration_memory_mode_stages_then_commits(tmp_path):
+    fake, svc = make_reg_service(tmp_path, excel_api=False)
+    plan = svc.reg_suggest(1, 3, "alt")["plans"][0]
+    pl = plan["placements"][0]
+    prev = svc.reg_preview(plan["id"], "CRYOTOP", [{"color": c, "hucre": "OOSİT"} for c in pl["colors"]], PATIENT)
+    assert svc.reg_apply(prev["id"])["ok"] and svc.state()["staged"] == prev["count"]
+    assert sheet_of(fake).cell(pl["rows"][0], 2).value is None            # henüz yüklenmedi
+    assert svc.commit()["ok"]
+    assert sheet_of(fake).cell(pl["rows"][0], 2).value == "YILMAZ"
+
+
+def test_registration_http_endpoints(tmp_path):
+    fake, svc = make_reg_service(tmp_path)
+    srv, token = make_server(svc, tmp_path / "log.jsonl"); serve_in_thread(srv)
+    base = f"http://127.0.0.1:{srv.server_address[1]}"
+    try:
+        assert _call(base + "/api/reg/options")[0] == 403
+        sug = json.loads(_call(base + "/api/reg/suggest", token=token, body={"tank": 1, "n": 1, "kat": "otomatik"})[1])
+        assert sug["ok"] and sug["plans"]
+    finally:
+        srv.shutdown()

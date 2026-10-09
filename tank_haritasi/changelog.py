@@ -17,6 +17,6 @@ class ChangeLog:
                  **self.context, **fields}
         fd = os.open(self.path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
         with os.fdopen(fd, "a", encoding="utf-8") as f:
-            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+            f.write(json.dumps(entry, ensure_ascii=False, default=str) + "\n")
             f.flush()
             os.fsync(f.fileno())
