@@ -52,5 +52,7 @@ class TokenProvider:
         if "access_token" not in result:
             raise AuthError(result.get("error_description") or str(result))
         claims = result.get("id_token_claims") or {}
-        self.username = claims.get("preferred_username") or claims.get("email") or self.username
+        accounts = self._app.get_accounts()
+        self.username = (claims.get("preferred_username") or claims.get("email")
+                         or (accounts[0].get("username") if accounts else None) or self.username)
         return result["access_token"]
