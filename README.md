@@ -55,6 +55,13 @@ silme isteği/HTTP DELETE yoktur). Önce yedek alınır; eski değerler değişi
 başkasınca değiştirilmişse hiçbir şey silinmez. Boşalan renk, o goblet için yeniden seçilebilir olur.
 Harita sekmesinde "Tümü" seçeneğiyle sayfanın tamamı tek seferde listelenir.
 
+## Görsel tank haritası (arayüzde "Tank haritası" sekmesi)
+Seçilen tank için her canister bir sütun; her goblet bir satır; üst ve alt kat 4'er nokta: boş = kesik çizgili daire,
+mavi/sarı/yeşil/turuncu = renkli straw (içinde harf: M, S, Y, T), R = rapidi (renksiz), ? = dolu ama renk okunamadı.
+Üstte tankın boş/dolu özeti. Hasta adlarını haritanın verisi içermez: bir noktaya tıklayınca ya da hasta ararken (soyad/ad)
+o hastanın straw'ları kırmızı halkayla işaretlenir. Standart olmayan (4 satırlık olmayan) konumlar haritada gösterilmez,
+sayısı özet satırında yazılır.
+
 ## Bellek-içi yöntemin sınırları
 Yükleme öncesi doğrulanır: yalnızca onaylı hücreler değişti mi; grafik/resim/pivot gibi parçalar kaybolacak mı
 (kaybolacaksa yüklenmez). Formüllerin önbellek değerleri Excel açıldığında yeniden hesaplanır.

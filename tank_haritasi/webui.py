@@ -70,6 +70,8 @@ def make_server(service: EditService, log_path, port: int = 0) -> tuple[Threadin
                                                   q.get("fresh") == "1"))
                 elif url.path == "/api/search":
                     self._json({"hits": service.search(q.get("q", ""))})
+                elif url.path == "/api/map":
+                    self._json(service.map_view(int(q["tank"])))
                 elif url.path == "/api/reg/options":
                     self._json(service.reg_options())
                 elif url.path == "/api/log":
@@ -101,6 +103,10 @@ def make_server(service: EditService, log_path, port: int = 0) -> tuple[Threadin
                                                    list(body["straws"]), dict(body["patient"])))
                 elif url.path == "/api/reg/apply":
                     self._json(service.reg_apply(str(body["id"])))
+                elif url.path == "/api/map/slot":
+                    self._json(service.map_slot(str(body["id"])))
+                elif url.path == "/api/map/find":
+                    self._json(service.map_find(str(body.get("q", "")), body.get("tank")))
                 elif url.path == "/api/rem/search":
                     self._json(service.rem_search(str(body.get("q", ""))))
                 elif url.path == "/api/rem/preview":
@@ -155,9 +161,22 @@ td.c{cursor:pointer}td.c:hover{outline:2px solid var(--acc);outline-offset:-2px}
 .diff{border:1px solid var(--line);border-radius:8px;padding:8px;margin:8px 0;background:var(--bg)}
 .diff div{word-break:break-word}.old{color:var(--bad)}.new{color:var(--ok)}
 #results{max-height:160px;overflow:auto;margin-bottom:8px}#results div{padding:3px 6px;cursor:pointer;border-radius:6px}#results div:hover{background:var(--bg)}
+#vizCans{display:flex;gap:12px;align-items:flex-start;overflow:auto;padding-bottom:8px}
+.can{min-width:196px;border:1px solid var(--line);border-radius:10px;background:var(--card);padding:6px}
+.can h4{margin:2px 0 4px;text-align:center}.can .lh{display:flex;gap:6px;padding:0 4px 2px 30px;color:var(--mut);font-size:10px}
+.can .lh span{width:70px;text-align:center}
+.gob{display:flex;align-items:center;gap:6px;padding:2px 4px;border-top:1px dashed var(--line)}
+.gn{width:20px;text-align:right;color:var(--mut);font-size:11px}.lv{display:flex;gap:3px;width:70px;justify-content:center}.lv .none{color:var(--mut);font-size:11px}
+.dot{width:15px;height:15px;border-radius:50%;border:1.5px solid var(--mut);font-size:8px;line-height:12px;text-align:center;cursor:pointer;color:#111;font-weight:700;box-sizing:border-box}
+.dot.empty{background:transparent;border-style:dashed;opacity:.75}
+.dot.cm{background:#3b82f6;border-color:#1d4ed8;color:#fff}.dot.cs{background:#facc15;border-color:#a16207}
+.dot.cy{background:#22c55e;border-color:#15803d}.dot.ct{background:#f97316;border-color:#c2410c}
+.dot.rapidi{background:#e5e7eb;border-color:#6b7280}.dot.other{background:#6b7280;border-color:#374151;color:#fff}
+.dot.hit{outline:3px solid #ef4444;outline-offset:1px}.dot.sel{box-shadow:0 0 0 3px var(--acc)}
+.legend{display:flex;gap:12px;flex-wrap:wrap;align-items:center;color:var(--mut);font-size:12px}.legend .dot{cursor:default;display:inline-block;vertical-align:middle;margin-right:3px}
 pre{white-space:pre-wrap;font-size:11px;color:var(--mut);max-height:180px;overflow:auto;margin:0}
 </style></head><body>
-<header><b id="file">…</b><button id="tabMap" class="p">Harita</button><button id="tabReg">Yeni hasta</button><button id="tabRem">Hasta çıkar</button><span class="pill" id="mode"></span><span class="pill prod" id="prod" hidden>GERÇEK DOSYA</span>
+<header><b id="file">…</b><button id="tabMap" class="p">Harita</button><button id="tabReg">Yeni hasta</button><button id="tabRem">Hasta çıkar</button><button id="tabViz">Tank haritası</button><span class="pill" id="mode"></span><span class="pill prod" id="prod" hidden>GERÇEK DOSYA</span>
 <span class="pill" id="bk"></span><span style="flex:1"></span><span id="pend" class="mut"></span>
 <button class="p" id="commit" hidden>OneDrive'a yükle…</button></header>
 <main id="mapView">
@@ -212,6 +231,16 @@ pre{white-space:pre-wrap;font-size:11px;color:var(--mut);max-height:180px;overfl
   <div class="mut" style="margin:8px 0">Onaylarsanız önce OneDrive'daki <b>Yedekler</b> klasörüne yedek alınır, sonra yukarıdaki hücreler yazılır.</div>
   <button class="p" id="rApply">Onayla ve yaz</button> <button id="rCancel">Vazgeç</button>
   <div id="rMsg" style="margin-top:10px"></div>
+</section>
+</main>
+<main id="vizView" hidden style="grid-template-columns:1fr">
+<section class="card">
+  <div class="bar"><label>Tank <select id="vTank"></select></label><button id="vRefresh">Yenile</button>
+   <input id="vq" placeholder="Hasta ara (soyad/ad) → haritada işaretle" size="30"><button id="vFind">Ara</button><span class="mut" id="vInfo"></span></div>
+  <div class="legend" id="vLegend"></div>
+  <div class="mut" id="vStats" style="margin:6px 0"></div>
+  <div id="vizCans"></div>
+  <div id="vDetail" class="diff" hidden></div>
 </section>
 </main>
 <main id="remView" hidden style="grid-template-columns:1fr">
@@ -279,10 +308,41 @@ async function logs(){const r=await api("/api/log");$("log").textContent=r.lines
   return e.ts.slice(11,19)+" "+e.event+(e.cell?" "+e.sheet+"!"+e.cell:"");}catch(_){return l;}}).join("\n");}
 /* ---- Yeni hasta */
 let R={plans:[],plan:null,regId:null};
-function show(view){$("mapView").hidden=view!=="map";$("regView").hidden=view!=="reg";$("remView").hidden=view!=="rem";
-  $("tabMap").className=view==="map"?"p":"";$("tabReg").className=view==="reg"?"p":"";$("tabRem").className=view==="rem"?"p":"";
-  if(view==="reg")regInit();}
-$("tabMap").onclick=()=>show("map");$("tabReg").onclick=()=>show("reg");$("tabRem").onclick=()=>show("rem");
+function show(view){$("mapView").hidden=view!=="map";$("regView").hidden=view!=="reg";$("remView").hidden=view!=="rem";$("vizView").hidden=view!=="viz";
+  $("tabMap").className=view==="map"?"p":"";$("tabReg").className=view==="reg"?"p":"";$("tabRem").className=view==="rem"?"p":"";$("tabViz").className=view==="viz"?"p":"";
+  if(view==="reg")regInit();if(view==="viz")vizInit();}
+$("tabMap").onclick=()=>show("map");$("tabReg").onclick=()=>show("reg");$("tabRem").onclick=()=>show("rem");$("tabViz").onclick=()=>show("viz");
+/* ---- Görsel tank haritası */
+const CCLS={"MAVİ":"cm","SARI":"cs","YEŞİL":"cy","TURUNCU":"ct"},CLET={"MAVİ":"M","SARI":"S","YEŞİL":"Y","TURUNCU":"T"};
+function dotEl(s){const d=document.createElement("span");d.className="dot "+(s.state==="color"?CCLS[s.color]:s.state);d.dataset.id=s.id;
+  d.textContent=s.state==="color"?CLET[s.color]:(s.state==="rapidi"?"R":(s.state==="other"?"?":""));
+  d.title=(s.state==="empty"?"boş":(s.vial||"dolu"))+" · satır "+s.row;d.onclick=()=>slotClick(s.id,d);return d;}
+function legend(){const L=$("vLegend");L.textContent="";[["empty","Boş"],["cm","Mavi"],["cs","Sarı"],["cy","Yeşil"],["ct","Turuncu"],["rapidi","Rapidi (renksiz)"],["other","Dolu, renk okunamadı"]].forEach(([c,t])=>{
+  const w=document.createElement("span");const d=document.createElement("span");d.className="dot "+c;w.appendChild(d);w.appendChild(document.createTextNode(t));L.appendChild(w);});}
+async function vizInit(){legend();const o=await api("/api/reg/options");const t=$("vTank");const keep=t.value;t.textContent="";
+  o.tanks.forEach(n=>t.add(new Option("Tank "+n,n)));if(keep)t.value=keep;await loadViz();}
+async function loadViz(){$("vDetail").hidden=true;const m=await api("/api/map?tank="+$("vTank").value);const box=$("vizCans");box.textContent="";
+  if(!m.ok){$("vStats").textContent=m.message;return;}const st=m.stats;
+  $("vStats").textContent=`${st.slots} straw yeri: ${st.free} boş · MAVİ ${st["MAVİ"]} · SARI ${st["SARI"]} · YEŞİL ${st["YEŞİL"]} · TURUNCU ${st["TURUNCU"]} · rapidi ${st.rapidi} · renk okunamayan ${st.other}`+(m.nonstandard?` · standart dışı ${m.nonstandard} konum haritada yok`:"");
+  m.canisters.forEach(c=>{const cd=document.createElement("div");cd.className="can";const h=document.createElement("h4");h.textContent="Canister "+c.canister;cd.appendChild(h);
+    const lh=document.createElement("div");lh.className="lh";[m.has_ust?"üst":"",  "alt"].forEach(x=>{const sp=document.createElement("span");sp.textContent=x;lh.appendChild(sp);});cd.appendChild(lh);
+    c.goblets.forEach(g=>{const row=document.createElement("div");row.className="gob";const n=document.createElement("span");n.className="gn";n.textContent=g.n;row.appendChild(n);
+      [["ust",m.has_ust],["alt",true]].forEach(([k,on])=>{if(!on)return;const lv=document.createElement("span");lv.className="lv";
+        if(g[k])g[k].slots.forEach(s=>lv.appendChild(dotEl(s)));else{const nn=document.createElement("span");nn.className="none";nn.textContent="—";lv.appendChild(nn);}row.appendChild(lv);});
+      cd.appendChild(row);});box.appendChild(cd);});}
+async function slotClick(id,el){document.querySelectorAll(".dot.sel").forEach(x=>x.classList.remove("sel"));el.classList.add("sel");
+  const r=await api("/api/map/slot",{id});const d=$("vDetail");d.textContent="";d.hidden=false;
+  const line=t=>{const e=document.createElement("div");e.textContent=t;d.appendChild(e);return e;};
+  if(!r.ok){line(r.message);return;}line(r.where).className="mut";
+  if(r.state==="empty"){line("Boş straw yeri.");return;}
+  line(`${r.soyad} ${r.ad}${r.esi?" (eşi: "+r.esi+")":""}`).style.fontWeight="600";line(`${r.vial||"-"} · ${r.hucre||"-"} · ${r.tarih||"-"}`);
+  const b=document.createElement("button");b.textContent="Hasta çıkar sekmesinde aç";b.onclick=()=>{$("xq").value=r.soyad;show("rem");$("xSearch").click();};d.appendChild(b);}
+$("vTank").onchange=loadViz;$("vRefresh").onclick=loadViz;
+$("vFind").onclick=async()=>{document.querySelectorAll(".dot.hit").forEach(x=>x.classList.remove("hit"));$("vInfo").textContent="";
+  const r=await api("/api/map/find",{q:$("vq").value,tank:+$("vTank").value});if(!r.ok){$("vInfo").textContent=r.message;return;}
+  let first=null;r.hits.forEach(h=>{const el=document.querySelector(`.dot[data-id="${CSS.escape(h.id)}"]`);if(el){el.classList.add("hit");first=first||el;}});
+  $("vInfo").textContent=r.hits.length?`${r.hits.length} straw: `+r.hits.slice(0,6).map(h=>h.where).join(" | "):"Bu tankta eşleşme yok.";
+  if(first)first.scrollIntoView({block:"center",inline:"center"});};
 /* ---- Hasta çıkar */
 let X={regId:null};
 function xmsg(t,cls){$("xMsg").textContent=t||"";$("xMsg").className=cls||"";}

@@ -11,7 +11,7 @@ from openpyxl.utils.cell import get_column_letter
 
 from .backup import BackupError
 from .editor import Change, apply_change, evaluate, log_evaluation
-from .harita import COLORS, STRAW_TYPES, Position, fold, scan_sheet, suggest, tr_upper, vial_text
+from .harita import COLORS, STRAW_TYPES, Position, fold, scan_sheet, suggest, tr_upper, vial_kind, vial_text
 from .sheetutil import CELL_RE
 
 CACHE_TTL = 20.0
@@ -395,3 +395,85 @@ class EditService:
             return {"ok": True, "count": done, "backup": info["path"],
                     "message": "Hazırlandı; 'OneDrive'a yükle' ile tamamlayın." if self.backend.needs_commit
                     else f"{done} hücre temizlendi. Yedek: {info['path']}"}
+
+
+    # ---- görsel tank haritası (adlar harita verisinde yer almaz; yalnızca tıklama/aramada döner)
+    @staticmethod
+    def _slot(p: Position, r) -> dict:
+        if not r.occupied:
+            state = "empty"
+        elif r.color:
+            state = "color"
+        elif vial_kind(r.vial) == "RAPIDI":
+            state = "rapidi"
+        else:
+            state = "other"
+        return {"id": f"{r.row}:{r.cells['no'][1]}:{p.sheet}", "row": r.row, "state": state, "color": r.color,
+                "vial": r.vial}
+
+    def map_view(self, tank: int) -> dict:
+        with self.lock:
+            allp = [p for p in self._scan_all() if p.tank == tank]
+            pos = [p for p in allp if p.standard]
+            if not pos:
+                return {"ok": False, "message": "Bu tank için standart konum bulunamadı."}
+            cans: dict[int, dict[int, dict]] = {}
+            for p in sorted(pos, key=lambda p: (p.canister or 0, p.number)):
+                g = cans.setdefault(p.canister or 0, {}).setdefault(p.number, {"n": p.number, "alt": None, "ust": None})
+                key = "ust" if p.kat == "üst" else "alt"
+                if g[key] is None:
+                    g[key] = {"label": p.label, "slots": [self._slot(p, r) for r in p.rows]}
+            stats = {"slots": 0, "free": 0, "rapidi": 0, "other": 0, **{c: 0 for c in COLORS}}
+            for p in pos:
+                for r in p.rows:
+                    stats["slots"] += 1
+                    st = self._slot(p, r)
+                    if st["state"] == "empty":
+                        stats["free"] += 1
+                    elif st["state"] == "color":
+                        stats[st["color"]] += 1
+                    else:
+                        stats[st["state"]] += 1
+            return {"ok": True, "tank": tank, "has_ust": any(p.kat == "üst" for p in pos), "stats": stats,
+                    "nonstandard": len(allp) - len(pos),
+                    "canisters": [{"canister": c, "goblets": [g for _, g in sorted(gs.items())]}
+                                  for c, gs in sorted(cans.items())]}
+
+    def _row_by_id(self, slot_id: str):
+        try:
+            row, col, sheet = slot_id.split(":", 2)
+            row, col = int(row), int(col)
+        except ValueError:
+            return None
+        for p in self._scan_all():
+            for r in p.rows:
+                if p.sheet == sheet and r.row == row and r.cells["no"][1] == col:
+                    return p, r
+        return None
+
+    def map_slot(self, slot_id: str) -> dict:
+        with self.lock:
+            hit = self._row_by_id(slot_id)
+            if not hit:
+                return {"ok": False, "message": "Satır bulunamadı; haritayı yenileyin."}
+            p, r = hit
+            st = self._slot(p, r)
+            return {"ok": True, "where": f"{p.name} · satır {r.row}", "state": st["state"], "color": r.color,
+                    "vial": r.vial, "soyad": r.soyad, "ad": r.ad, "esi": r.esi, "tarih": r.date_text,
+                    "hucre": r.hucre}
+
+    def map_find(self, query: str, tank: int | None = None) -> dict:
+        q = fold(query)
+        if len(q) < 2:
+            return {"ok": False, "message": "En az 2 harf yazın."}
+        hits = []
+        with self.lock:
+            for p in self._scan_all():
+                if tank is not None and p.tank != tank:
+                    continue
+                for r in p.rows:
+                    if (r.soyad or r.ad) and any(q in fold(f) for f in (f"{r.soyad} {r.ad}", f"{r.ad} {r.soyad}")):
+                        hits.append({"id": f"{r.row}:{r.cells['no'][1]}:{p.sheet}",
+                                     "where": f"Tank {p.tank or '?'} / Canister {p.canister or '?'} / {p.label} "
+                                              f"({p.kat} kat) · satır {r.row}", "vial": r.vial})
+        return {"ok": True, "hits": hits[:100]}

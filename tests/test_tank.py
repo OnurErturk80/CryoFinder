@@ -571,3 +571,67 @@ def test_sheet_view_can_return_whole_sheet(tmp_path):
     fake, svc = make_reg_service(tmp_path)
     v = svc.sheet_view("TANK 5", 1, 5000)
     assert v["max_row"] >= 36 and len(v["rows"]) == v["max_row"] and v["row0"] == 1
+
+
+# ---- görsel tank haritası
+def make_two_level_xlsx():
+    from openpyxl import Workbook
+    wb = Workbook(); ws = wb.active; ws.title = "TANK 1+2+3"
+    for (r, c), v in make_map_cells().items():
+        ws.cell(r, c, v)
+    up = wb.create_sheet("Tank 1-5 üst")                      # üst kat: adında "üst" geçen sayfa
+    for (r, c), v in make_map_cells().items():
+        up.cell(r, c, v)
+    for k in range(4):                                         # üstte 3. goblet 2 straw ile doldurulmuş
+        pass
+    up.cell(13, 2, "UYELIK"); up.cell(13, 3, "Ad"); up.cell(13, 6, "D5 (4AA)"); up.cell(13, 7, "1 VİTRİFİTYEŞİL")
+    b = io.BytesIO(); wb.save(b); return b.getvalue()
+
+
+def make_viz_service(tmp_path):
+    fake = FakeOneDrive({PATH: make_two_level_xlsx()}, excel_api=True)
+    c = GraphClient(lambda: "tok", session=fake, sleep=lambda s: None)
+    bk = Backuper(c, "Yedekler", PATH, lambda: onedrive.download(c, "ID1"))
+    return fake, EditService(ExcelApiBackend(c, "ID1"), bk, logger(tmp_path), PATH)
+
+
+def test_map_view_structure_states_and_no_names(tmp_path):
+    fake, svc = make_viz_service(tmp_path)
+    m = svc.map_view(1)
+    assert m["ok"] and m["has_ust"] and [c["canister"] for c in m["canisters"]] == [1, 2]
+    g = {x["n"]: x for x in m["canisters"][0]["goblets"]}
+    assert len(g) == 8
+    assert [s["state"] for s in g[1]["alt"]["slots"]] == ["rapidi"] * 4
+    assert [s["state"] for s in g[2]["alt"]["slots"]] == ["color", "rapidi", "rapidi", "empty"]
+    assert g[2]["alt"]["slots"][0]["color"] == "MAVİ" and g[3]["alt"]["slots"][0]["state"] == "empty"
+    assert g[3]["ust"]["slots"][0]["state"] == "color" and g[3]["ust"]["slots"][0]["color"] == "YEŞİL"   # üst kat ayrı sayfadan
+    st = m["stats"]
+    assert st["slots"] == sum(len(x["slots"]) for c in m["canisters"] for gg in c["goblets"]
+                              for x in (gg["alt"], gg["ust"]) if x)
+    assert st["MAVİ"] >= 1 and st["free"] >= 1
+    assert "SOYAD" not in json.dumps(m, ensure_ascii=False) and "UYELIK" not in json.dumps(m, ensure_ascii=False)  # adlar yok
+
+
+def test_map_slot_and_find(tmp_path):
+    fake, svc = make_viz_service(tmp_path)
+    sid = next(s["id"] for c in svc.map_view(1)["canisters"] for gg in c["goblets"]
+               for x in (gg["alt"], gg["ust"]) if x for s in x["slots"] if s["state"] == "color" and s["color"] == "MAVİ")
+    d = svc.map_slot(sid)
+    assert d["ok"] and d["soyad"] == "SOYADA" or d["soyad"].startswith("SOYAD")
+    assert not svc.map_slot("bozuk")["ok"] and not svc.map_slot("1:1:YOKSAYFA")["ok"]
+    hits = svc.map_find("uyelik", 1)
+    assert hits["ok"] and len(hits["hits"]) == 1 and "UYELIK" not in json.dumps(hits, ensure_ascii=False)
+    assert svc.map_find("uyelik", 5)["hits"] == [] and not svc.map_find("u")["ok"]
+    assert svc.map_view(9)["ok"] is False
+
+
+def test_map_endpoints_require_token(tmp_path):
+    fake, svc = make_viz_service(tmp_path)
+    srv, token = make_server(svc, tmp_path / "log.jsonl"); serve_in_thread(srv)
+    base = f"http://127.0.0.1:{srv.server_address[1]}"
+    try:
+        assert _call(base + "/api/map?tank=1")[0] == 403
+        assert _call(base + "/api/map/find", body={"q": "ab"})[0] == 403
+        assert json.loads(_call(base + "/api/map?tank=1", token=token)[1])["ok"]
+    finally:
+        srv.shutdown()
