@@ -17,6 +17,7 @@ from .excel_api import ExcelApiBackend, probe
 from .graph import GraphClient, GraphError
 from .memory import MemoryBackend
 from .onedrive import ConflictError
+from .profile import profile_workbook
 from .service import EditService
 from .webui import make_server
 
@@ -210,6 +211,14 @@ def cmd_gui(args, cfg, client, tp):
             print(f"⚠ {len(svc.staged)} değişiklik OneDrive'a YÜKLENMEDİ (bellek modu) ve kayboldu.")
 
 
+def cmd_profile(args, cfg, client, tp):
+    """Dosyayı yalnızca bellekte açıp hasta verisini göstermeden yapısını özetler."""
+    path = cfg.target_path(args.production)
+    meta, data = onedrive.download_consistent(client, path)
+    print(f"Dosya: {meta['name']}  (yalnızca yapı; kişi adı sütunları gösterilmez)")
+    print("\n".join(profile_workbook(data)))
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="tank_haritasi", description="OneDrive tank haritası düzenleyici (silme yok).")
     p.add_argument("--production", action="store_true", help="TEST yerine gerçek dosyayı kullan")
@@ -223,6 +232,7 @@ def build_parser() -> argparse.ArgumentParser:
     s.set_defaults(fn=cmd_probe)
     s = sub.add_parser("gui", help="Tarayıcı arayüzünü başlat (yalnızca bu bilgisayardan erişilir)")
     s.add_argument("--port", type=int, default=0); s.set_defaults(fn=cmd_gui)
+    sub.add_parser("profile", help="Hasta verisini göstermeden dosya yapısını özetle").set_defaults(fn=cmd_profile)
     sub.add_parser("sheets", help="Sayfaları listele").set_defaults(fn=cmd_sheets)
     s = sub.add_parser("show", help="Aralığı göster"); s.add_argument("sheet")
     s.add_argument("--range", default="A1:L30"); s.set_defaults(fn=cmd_show)

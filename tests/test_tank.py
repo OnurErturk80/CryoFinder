@@ -241,3 +241,22 @@ def test_webui_security_and_happy_path(tmp_path):
         assert _call(base + "/api/delete", token=token, body={})[0] == 404             # silme ucu yok
     finally:
         srv.shutdown()
+
+
+def test_profile_hides_personal_data():
+    from openpyxl import Workbook
+    from openpyxl.styles import PatternFill
+    from tank_haritasi.profile import profile_workbook
+    wb = Workbook(); ws = wb.active; ws.title = "TANK 1"
+    ws["A1"] = "TANK 1"; ws["A3"] = "CANISTER 1"
+    for i, h in enumerate(["NO", "SOYAD", "AD", "TARİH", "VİAL"], 1):
+        ws.cell(5, i, h)
+    for r, (no, soyad, ad, vial) in enumerate([("1A", "GİZLİSOYAD", "GİZLİAD", "RAPIDI 1"),
+                                               ("1B", "BAŞKASOYAD", "BAŞKAAD", "VİTRİFİT MAVİ")], 6):
+        ws.cell(r, 1, no); ws.cell(r, 2, soyad); ws.cell(r, 3, ad); ws.cell(r, 4, 44597); ws.cell(r, 5, vial)
+        ws.cell(r, 5).fill = PatternFill("solid", fgColor="0000FF")
+    b = io.BytesIO(); wb.save(b)
+    out = "\n".join(profile_workbook(b.getvalue()))
+    for secret in ("GİZLİSOYAD", "GİZLİAD", "BAŞKASOYAD", "BAŞKAAD"):
+        assert secret not in out
+    assert "CANISTER 1" in out and "VİTRİFİT MAVİ" in out and "0000FF" in out and "SOYAD" in out
