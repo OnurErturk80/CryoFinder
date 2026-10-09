@@ -105,6 +105,7 @@ class FakeOneDrive:
         m = re.search(r"worksheets/\{(.+?)\}/usedRange", u)
         if m:
             ws = wb[m[1]]
-            return Resp(200, {"address": f"{m[1]}!A1:{ws.dimensions.split(':')[-1]}",
-                              "values": [[c.value if c.value is not None else "" for c in row] for row in ws.iter_rows()]})
+            grid = [[c.value if c.value is not None else "" for c in row] for row in ws.iter_rows()]
+            return Resp(200, {"address": f"{m[1]}!A1:{ws.dimensions.split(':')[-1]}", "values": grid,
+                              "text": [[str(v) for v in row] for row in grid]})
         raise AssertionError(u)

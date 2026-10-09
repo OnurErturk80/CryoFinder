@@ -142,3 +142,102 @@ def test_gitignore_protects_secrets():
     text = Path(".gitignore").read_text()
     for pat in (".env", ".token_cache", "degisiklik_kaydi", "*.xlsx"):
         assert pat in text
+
+
+# ---- arayüz servisi ve yerel sunucu güvenliği
+import json
+import urllib.error
+import urllib.request
+
+from tank_haritasi.service import EditService
+from tank_haritasi.webui import make_server, serve_in_thread
+
+
+def make_service(tmp_path, excel_api=True):
+    fake, c = setup(excel_api=excel_api)
+    if excel_api:
+        be = ExcelApiBackend(c, "ID1")
+        data = None
+    else:
+        meta, data = onedrive.download_consistent(c, PATH)
+        be = MemoryBackend(c, meta, data)
+    getter = (lambda: data) if data else (lambda: onedrive.download(c, "ID1"))
+    bk = Backuper(c, "Yedekler", PATH, getter, now=lambda: datetime(2026, 10, 9, 12, 0, 0))
+    return fake, EditService(be, bk, logger(tmp_path), PATH)
+
+
+def test_service_propose_apply_backup_and_single_use(tmp_path):
+    fake, svc = make_service(tmp_path)
+    p = svc.propose("Tank1", "B1", "Yeni")
+    assert p["ok"] and p["old"] == "Boş" and p["new"] == "Yeni"
+    assert not any(v["path"].startswith("Yedekler/T") for v in fake.items.values())  # onaydan önce yedek/yazma yok
+    r = svc.apply(p["id"])
+    assert r["ok"] and r["backup"].startswith("Yedekler/")
+    assert load_workbook(io.BytesIO(fake.items["ID1"]["data"]))["Tank1"]["B1"].value == "Yeni"
+    assert not svc.apply(p["id"])["ok"]  # tek kullanımlık
+
+
+def test_service_refuses_formula_and_detects_stale(tmp_path):
+    fake, svc = make_service(tmp_path)
+    assert not svc.propose("Tank1", "C3", "5")["ok"]
+    assert not svc.propose("Tank1", "B1", "=1+1")["ok"]
+    p = svc.propose("Tank1", "B1", "Yeni")
+    fake.external_edit(PATH, make_xlsx({"B1": "başkası yazdı"}))
+    assert not svc.apply(p["id"])["ok"]
+    assert load_workbook(io.BytesIO(fake.items["ID1"]["data"]))["Tank1"]["B1"].value == "başkası yazdı"
+
+
+def test_service_decline_writes_nothing(tmp_path):
+    fake, svc = make_service(tmp_path)
+    p = svc.propose("Tank1", "B1", "X")
+    svc.decline(p["id"])
+    assert not svc.apply(p["id"])["ok"]
+    assert "declined" in (tmp_path / "log.jsonl").read_text(encoding="utf-8")
+
+
+def test_service_memory_commit_flow(tmp_path):
+    fake, svc = make_service(tmp_path, excel_api=False)
+    svc.apply(svc.propose("Tank1", "B1", "Bellek")["id"])
+    assert svc.state()["staged"] == 1
+    assert svc.prepare_commit()["ok"]
+    assert svc.commit()["ok"]
+    assert load_workbook(io.BytesIO(fake.items["ID1"]["data"]))["Tank1"]["B1"].value == "Bellek"
+    svc.apply(svc.propose("Tank1", "B1", "İkinci")["id"])
+    assert svc.commit()["ok"]  # eTag güncellendiği için ikinci yükleme çakışmaz
+
+
+def _call(url, token=None, host=None, body=None, origin=None, ctype="application/json"):
+    req = urllib.request.Request(url, data=None if body is None else json.dumps(body).encode(),
+                                 method="POST" if body is not None else "GET")
+    if token: req.add_header("X-Session-Token", token)
+    if host: req.add_header("Host", host)
+    if origin: req.add_header("Origin", origin)
+    if body is not None: req.add_header("Content-Type", ctype)
+    try:
+        with urllib.request.urlopen(req) as r:
+            return r.status, r.read().decode()
+    except urllib.error.HTTPError as e:
+        return e.code, e.read().decode()
+
+
+def test_webui_security_and_happy_path(tmp_path):
+    fake, svc = make_service(tmp_path)
+    srv, token = make_server(svc, tmp_path / "log.jsonl")
+    serve_in_thread(srv)
+    base = f"http://127.0.0.1:{srv.server_address[1]}"
+    try:
+        assert _call(base + "/api/state")[0] == 403                                   # anahtarsız
+        assert _call(base + "/api/state", token="yanlis")[0] == 403
+        assert _call(base + "/api/state", token=token, host="evil.example")[0] == 403  # DNS rebinding
+        assert _call(base + "/api/propose", token=token, body={}, origin="http://evil.example")[0] == 403
+        assert _call(base + "/api/propose", token=token, body={"sheet": "Tank1", "cell": "B1"}, ctype="text/plain")[0] == 415
+        code, page = _call(base + "/")
+        assert code == 200 and token in page
+        assert json.loads(_call(base + "/api/state", token=token)[1])["mode"] == "excel-api"
+        view = json.loads(_call(base + "/api/sheet?name=Tank1", token=token)[1])
+        assert view["rows"][0][0] == "Kanister 1"
+        p = json.loads(_call(base + "/api/propose", token=token, body={"sheet": "Tank1", "cell": "B1", "value": "Web"})[1])
+        assert json.loads(_call(base + "/api/apply", token=token, body={"id": p["id"]})[1])["ok"]
+        assert _call(base + "/api/delete", token=token, body={})[0] == 404             # silme ucu yok
+    finally:
+        srv.shutdown()

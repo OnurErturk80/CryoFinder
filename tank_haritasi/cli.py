@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import posixpath
 import sys
+import webbrowser
 
 from openpyxl.utils.cell import get_column_letter, range_boundaries
 
@@ -16,6 +17,8 @@ from .excel_api import ExcelApiBackend, probe
 from .graph import GraphClient, GraphError
 from .memory import MemoryBackend
 from .onedrive import ConflictError
+from .service import EditService
+from .webui import make_server
 
 
 def _confirm(question: str) -> bool:
@@ -50,7 +53,7 @@ def _print_grid(cells: dict, rng: str) -> None:
             print(f"{r:>4} " + " ".join(row))
 
 
-def _open_backend(args, client, path):
+def _open_backend(args, client, path, sessionless=False):
     """auto: Excel API çalışıyorsa onu, çalışmıyorsa bellek-içi yöntemi seç."""
     meta = onedrive.get_item_by_path(client, path)
     mode = args.mode
@@ -58,7 +61,8 @@ def _open_backend(args, client, path):
         ok, steps = probe(client, meta["id"])
         if ok:
             be = ExcelApiBackend(client, meta["id"], persist=True)
-            be.open()
+            if not sessionless:  # uzun süren arayüzde oturum zaman aşımına uğramasın diye oturumsuz çağrı
+                be.open()
             return meta, be, None
         if mode == "excel-api":
             raise SystemExit("Excel API çalışmıyor:\n" + "\n".join(f"  {'✓' if o else '✗'} {m}" for o, m in steps))
@@ -183,6 +187,29 @@ def cmd_set(args, cfg, client, tp):
         be.close()
 
 
+def cmd_gui(args, cfg, client, tp):
+    path = cfg.target_path(args.production)
+    _guard_write(path, args.production)
+    meta, be, data = _open_backend(args, client, path, sessionless=True)
+    log = ChangeLog(cfg.changelog_path, {"file": path, "item_id": meta["id"], "mode": be.name, "user": tp.username})
+    getter = (lambda: data) if data is not None else (lambda: onedrive.download(client, meta["id"]))
+    backuper = Backuper(client, cfg.backup_folder, meta["name"], getter)
+    svc = EditService(be, backuper, log, meta["name"], args.production)
+    srv, _ = make_server(svc, cfg.changelog_path, args.port)
+    url = f"http://127.0.0.1:{srv.server_address[1]}/"
+    print(f"Arayüz: {url}   (durdurmak için Ctrl+C)")
+    webbrowser.open(url)
+    try:
+        srv.serve_forever()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        srv.server_close()
+        be.close()
+        if svc.staged:
+            print(f"⚠ {len(svc.staged)} değişiklik OneDrive'a YÜKLENMEDİ (bellek modu) ve kayboldu.")
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="tank_haritasi", description="OneDrive tank haritası düzenleyici (silme yok).")
     p.add_argument("--production", action="store_true", help="TEST yerine gerçek dosyayı kullan")
@@ -194,6 +221,8 @@ def build_parser() -> argparse.ArgumentParser:
     s = sub.add_parser("probe", help="Excel API bu dosyada çalışıyor mu?")
     s.add_argument("--write-probe", action="store_true", help="Aynı değeri geri yazarak yazmayı da dene (onaylı)")
     s.set_defaults(fn=cmd_probe)
+    s = sub.add_parser("gui", help="Tarayıcı arayüzünü başlat (yalnızca bu bilgisayardan erişilir)")
+    s.add_argument("--port", type=int, default=0); s.set_defaults(fn=cmd_gui)
     sub.add_parser("sheets", help="Sayfaları listele").set_defaults(fn=cmd_sheets)
     s = sub.add_parser("show", help="Aralığı göster"); s.add_argument("sheet")
     s.add_argument("--range", default="A1:L30"); s.set_defaults(fn=cmd_show)

@@ -28,6 +28,17 @@ python -m tank_haritasi set -c "Sayfa1!B3=Yeni değer" -c "Sayfa1!B4="
 `--mode auto` (varsayılan): Excel API çalışıyorsa onu, çalışmıyorsa dosyayı yalnızca bellekte açıp
 `If-Match: <eTag>` ile geri yükleyen yöntemi seçer. `--mode excel-api|memory` ile zorlanabilir.
 
+## Tarayıcı arayüzü (önerilen)
+```
+python3 -m tank_haritasi gui
+```
+Yalnızca bu bilgisayardan erişilen (127.0.0.1) yerel bir sayfa açar: sayfa seç, ara, hücreye tıkla, yeni değeri yaz,
+eski→yeni farkını gör, **Onayla ve uygula**'ya bas. Kurallar CLI ile aynıdır: onaydan önce hiçbir şey yazılmaz, ilk onayda
+`Yedekler/`'e yedek alınır, her olay `degisiklik_kaydi.jsonl`'e yazılır, silme yok. Siz incelerken hücre başkasınca
+değiştirilirse uygulama reddedilir. Gerçek dosya için `--production` (başlangıçta terminalde dosya adı sorulur).
+Güvenlik: oturum anahtarı, Host/Origin denetimi, yalnızca JSON POST; diğer web siteleri arayüzü kullanamaz.
+Hücreler Excel'de göründüğü biçimde (tarihler dahil) gösterilir.
+
 ## Bellek-içi yöntemin sınırları
 Yükleme öncesi doğrulanır: yalnızca onaylı hücreler değişti mi; grafik/resim/pivot gibi parçalar kaybolacak mı
 (kaybolacaksa yüklenmez). Formüllerin önbellek değerleri Excel açıldığında yeniden hesaplanır.

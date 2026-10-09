@@ -47,10 +47,12 @@ class ExcelApiBackend:
                 return f"{self.base}/worksheets/{urllib.parse.quote(sid, safe='')}"
         raise KeyError(f"Sayfa yok: {sheet}")
 
-    def dump(self, sheet: str) -> dict[tuple[int, int], object]:
+    def dump(self, sheet: str, text: bool = False) -> dict[tuple[int, int], object]:
+        """text=True: hücrelerin Excel'deki görünen (biçimli) metni; aksi hâlde ham değer."""
+        field = "text" if text else "values"
         r = self.c.request("GET", f"{self._ws(sheet)}/usedRange(valuesOnly=true)", headers=self._h(),
-                           params={"$select": "address,values"}).json()
-        return grid_to_cells(r["address"], r["values"])
+                           params={"$select": f"address,{field}"}).json()
+        return grid_to_cells(r["address"], r[field])
 
     def get_cell(self, sheet: str, cell: str):
         r = self.c.request("GET", f"{self._ws(sheet)}/range(address='{cell}')", headers=self._h(),

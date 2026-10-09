@@ -37,9 +37,10 @@ class MemoryBackend:
                 return self.wb[n]
         raise KeyError(f"Sayfa yok: {sheet}")
 
-    def dump(self, sheet: str):
+    def dump(self, sheet: str, text: bool = False):
         ws = self._ws(sheet)
-        return {(c.row, c.column): c.value for row in ws.iter_rows() for c in row if c.value not in ("", None)}
+        fmt = (lambda v: v.date().isoformat() if hasattr(v, "date") else v) if text else (lambda v: v)
+        return {(c.row, c.column): fmt(c.value) for row in ws.iter_rows() for c in row if c.value not in ("", None)}
 
     def get_cell(self, sheet: str, cell: str):
         c = self._ws(sheet)[cell]
