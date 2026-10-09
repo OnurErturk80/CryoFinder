@@ -661,3 +661,39 @@ def test_sheet_view_serves_requested_row_counts(tmp_path):
     whole = svc.sheet_view("BUYUK", 1, 5000)
     assert len(whole["rows"]) == 595 and whole["max_row"] == 595 and whole["max_col"] == 59
     assert len(svc.sheet_view("BUYUK", 551, 100)["rows"]) == 45        # son sayfa
+
+
+# ---- kapatma ucu, sabit port, başlatma dosyaları
+def test_shutdown_endpoint_stops_server_and_requires_token(tmp_path):
+    fake, svc = make_viz_service(tmp_path)
+    srv, token = make_server(svc, tmp_path / "log.jsonl")
+    t = serve_in_thread(srv)
+    base = f"http://127.0.0.1:{srv.server_address[1]}"
+    assert _call(base + "/api/shutdown", body={})[0] == 403 and t.is_alive()
+    assert json.loads(_call(base + "/api/shutdown", token=token, body={})[1])["ok"]
+    t.join(timeout=5)
+    assert not t.is_alive()
+    srv.server_close()
+
+
+def test_preferred_port_falls_back_when_busy(tmp_path):
+    fake, svc = make_viz_service(tmp_path)
+    first, _ = make_server(svc, tmp_path / "log.jsonl")
+    busy = first.server_address[1]
+    second, _ = make_server(svc, tmp_path / "log.jsonl", port=busy)      # tercih edilen port dolu
+    assert second.server_address[1] != busy
+    first.server_close(); second.server_close()
+
+
+def test_launchers_exist_and_are_executable_where_needed():
+    import os, stat
+    cmd = Path("Tank Haritasi.command")
+    assert cmd.exists() and os.access(cmd, os.X_OK) and cmd.read_text(encoding="utf-8").startswith("#!/bin/bash")
+    assert "tank_haritasi gui" in cmd.read_text(encoding="utf-8") and "--only-binary=:all:" in cmd.read_text(encoding="utf-8")
+    assert "tank_haritasi gui" in Path("Tank Haritasi.bat").read_text(encoding="utf-8")
+
+
+def test_page_has_no_innerhtml_and_is_mobile_ready():
+    from tank_haritasi.page import PAGE
+    assert "innerHTML" not in PAGE and "outerHTML" not in PAGE and "document.write" not in PAGE
+    assert 'name="viewport"' in PAGE and "@media(max-width:700px)" in PAGE and "env(safe-area-inset-bottom)" in PAGE

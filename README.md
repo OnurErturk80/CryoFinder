@@ -15,6 +15,15 @@ OneDrive'daki (kişisel Microsoft hesabı) `.xlsx` tank haritasını, **diske ka
 ## Kurulum
 `pip install -r requirements.txt`, [docs/AZURE_KAYIT.md](docs/AZURE_KAYIT.md) adımlarını izleyin, `.env.example` → `.env`.
 
+## Kolay başlatma (terminal yazmadan)
+- **Mac:** klasördeki **`Tank Haritasi.command`** dosyasına çift tıklayın (Dock'a sürükleyebilirsiniz). İlk açılışta sanal
+  ortamı ve paketleri kendisi kurar; `.env` yoksa/boşsa Client ID için açar. Sonra Microsoft girişi ve arayüz tarayıcıda açılır.
+  macOS "tanımlanamayan geliştirici" derse: dosyaya sağ tık → Aç.
+- **Windows:** **`Tank Haritasi.bat`** dosyasına çift tıklayın (aynı adımlar).
+- Kapatmak için arayüzde sağ üstteki **Kapat**, ya da terminal penceresinde `Ctrl+C` / pencereyi kapatma.
+- Arayüz yalnızca bu bilgisayardan erişilir (127.0.0.1); telefon tarayıcısından başka cihaz bağlanamaz. Arayüz telefon
+  genişliğine uyumludur (alt gezinme çubuğu, büyük dokunma alanları, kaydırmalı canister haritası).
+
 ## Kullanım (varsayılan hedef: TANK_HARITASI_TEST.xlsx)
 ```
 python -m tank_haritasi login                # tarayıcı olmayan ortamda: --device-code

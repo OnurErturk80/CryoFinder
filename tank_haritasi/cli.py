@@ -199,7 +199,8 @@ def cmd_gui(args, cfg, client, tp):
     svc = EditService(be, backuper, log, meta["name"], args.production)
     srv, _ = make_server(svc, cfg.changelog_path, args.port)
     url = f"http://127.0.0.1:{srv.server_address[1]}/"
-    print(f"Arayüz: {url}   (durdurmak için Ctrl+C)")
+    print(f"Arayüz: {url}")
+    print("Kapatmak için tarayıcıdaki 'Kapat' düğmesini, bu pencerede Ctrl+C'yi kullanın ya da pencereyi kapatın.")
     webbrowser.open(url)
     try:
         srv.serve_forever()
@@ -256,7 +257,7 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--write-probe", action="store_true", help="Aynı değeri geri yazarak yazmayı da dene (onaylı)")
     s.set_defaults(fn=cmd_probe)
     s = sub.add_parser("gui", help="Tarayıcı arayüzünü başlat (yalnızca bu bilgisayardan erişilir)")
-    s.add_argument("--port", type=int, default=0); s.set_defaults(fn=cmd_gui)
+    s.add_argument("--port", type=int, default=8765, help="tercih edilen port (doluysa otomatik seçilir)"); s.set_defaults(fn=cmd_gui)
     sub.add_parser("profile", help="Hasta verisini göstermeden dosya yapısını özetle").set_defaults(fn=cmd_profile)
     s = sub.add_parser("yerler", help="Konum/boş yer özeti ve yer önerisi (kişi adı göstermez)")
     s.add_argument("--tank", type=int); s.add_argument("--straw", type=int, help="önerilecek straw sayısı")
