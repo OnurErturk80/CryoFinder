@@ -260,3 +260,78 @@ def test_profile_hides_personal_data():
     for secret in ("GİZLİSOYAD", "GİZLİAD", "BAŞKASOYAD", "BAŞKAAD"):
         assert secret not in out
     assert "CANISTER 1" in out and "VİTRİFİT MAVİ" in out and "0000FF" in out and "SOYAD" in out
+
+
+# ---- harita modeli ve yer önerisi
+from tank_haritasi.harita import COLORS, scan_sheet, suggest, summarize, vial_color, vial_text
+
+
+def make_map_cells():
+    """Tek sayfa, TANK 1, iki canister bloğu (sütun A ve I); her blokta 1A..8A (4'er satır)."""
+    cells = {(1, 1): "TANK 1", (3, 1): "CANISTER 1", (3, 9): "CANISTER 2"}
+    def put(block_col, row, soyad, vial):
+        cells[(row, block_col + 1)], cells[(row, block_col + 2)] = soyad, "Ad"
+        cells[(row, block_col + 5)], cells[(row, block_col + 6)] = "D5 (4AA)", vial
+    for col in (1, 9):
+        for g in range(1, 9):
+            for k in range(4):
+                cells[(5 + (g - 1) * 4 + k, col)] = f"{g}A"
+    filled = {1: ["1 RAPIDI 1", "1 RAPIDI 2", "1 RAPIDI 3", "1 RAPIDI 4"],           # 1A dolu (rapidi)
+              6: ["1 RAPIDI 1", "1 RAPIDI 2", "1 RAPIDI 3", "1 RAPIDI 4"],           # 6A dolu (rapidi)
+              2: ["1 VİTRİFİTMAVİ", "1 RAPIDI 2", "1 RAPIDI 3"],                       # 2A: 1 boş satır, mavi kullanılmış
+              4: ["1 CRYOLOCKSARI", "1 VİTRİFİTMAVİ"]}                                   # 4A: 2 boş satır
+    for g, vials in filled.items():
+        for k, v in enumerate(vials):
+            put(1, 5 + (g - 1) * 4 + k, "SOYAD" + "ABCDEFGH"[g - 1], v)
+    for g in range(1, 9):  # 2. canister: tamamen boş, ama soyad sütununda yeterli metin olsun diye 5-8. goblet dolu
+        if g >= 5:
+            for k in range(4):
+                put(9, 5 + (g - 1) * 4 + k, "BSOYAD" + "ABCDEFGH"[g - 1], f"1 RAPIDI {k + 1}")
+    return cells
+
+
+def test_vial_helpers():
+    assert vial_color("1 VİTRİFİTMAVİ") == "MAVİ" and vial_color("1 CRYOLOCKSARI") == "SARI"
+    assert vial_color("1 vitrifityeşil") == "YEŞİL" and vial_color("1 CRYOTOPTURUNCU") == "TURUNCU"
+    assert vial_color("1 RAPIDI 1") is None
+    assert vial_text("CRYOLOCK", "SARI") == "1 CRYOLOCKSARI"
+
+
+def test_scan_finds_positions_and_state():
+    ps = scan_sheet("S", make_map_cells())
+    assert len(ps) == 16 and all(len(p.rows) == 4 for p in ps)
+    p = {(x.canister, x.label): x for x in ps}
+    assert p[(1, "1A")].free_rows == [] and p[(1, "3A")].free_colors == COLORS
+    assert len(p[(1, "2A")].free_rows) == 1 and p[(1, "2A")].free_colors == ["SARI", "YEŞİL", "TURUNCU"]
+    assert p[(1, "4A")].used_colors == {"SARI", "MAVİ"} and p[(1, "2A")].tank == 1
+    text = "\n".join(summarize(ps))
+    assert "SOYAD" not in text and "Canister 1" in text
+
+
+def test_suggest_two_straws_different_colors_adjacent():
+    ps = [p for p in scan_sheet("S", make_map_cells()) if p.canister == 1]
+    plan = suggest(ps, 2)[0]
+    pl = plan.placements[0]
+    assert plan.span == 1 and pl.position.label == "3A" and pl.colors == ["MAVİ", "SARI"]
+    assert pl.rows[1].row == pl.rows[0].row + 1  # yan yana satırlar
+
+
+def test_suggest_never_repeats_color_in_a_goblet_and_spans_neighbours():
+    ps = [p for p in scan_sheet("S", make_map_cells()) if p.canister == 1]
+    for n in (1, 2, 3, 5, 6):
+        for plan in suggest(ps, n, limit=50):
+            assert sum(len(pl.rows) for pl in plan.placements) == n
+            for pl in plan.placements:
+                taken = pl.position.used_colors
+                assert len(set(pl.colors)) == len(pl.colors) and not (set(pl.colors) & taken)
+                assert all(not r.occupied for r in pl.rows)
+            nums = [pl.position.number for pl in plan.placements]
+            assert nums == list(range(nums[0], nums[0] + len(nums)))  # komşu gobletler
+    five = suggest(ps, 5)[0]
+    assert five.span == 2  # 4'ten fazla straw tek goblete sığmaz
+
+
+def test_suggest_colorless_uses_free_rows_only():
+    ps = [p for p in scan_sheet("S", make_map_cells()) if p.canister == 1]
+    plan = suggest(ps, 3, colored=False)[0]
+    assert plan.placements[0].colors == [None, None, None]

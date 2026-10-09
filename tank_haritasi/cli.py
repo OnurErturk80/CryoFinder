@@ -17,6 +17,7 @@ from .excel_api import ExcelApiBackend, probe
 from .graph import GraphClient, GraphError
 from .memory import MemoryBackend
 from .onedrive import ConflictError
+from .harita import describe_plan, scan_sheet, summarize, suggest
 from .profile import profile_workbook
 from .service import EditService
 from .webui import make_server
@@ -219,6 +220,27 @@ def cmd_profile(args, cfg, client, tp):
     print("\n".join(profile_workbook(data)))
 
 
+def cmd_yerler(args, cfg, client, tp):
+    """Haritadaki konumları ve boş yerleri özetler; kişi adı göstermez. İsteğe bağlı yer önerisi."""
+    path = cfg.target_path(args.production)
+    meta, be, _ = _open_backend(args, client, path, sessionless=True)
+    try:
+        positions = []
+        for name in be.sheet_names():
+            found = scan_sheet(name, be.dump(name, text=True))
+            print(f"[{name}] {'konum algılanamadı (desteklenmeyen düzen)' if not found else f'{len(found)} konum'}")
+            positions += found
+        print("\n".join(["", *summarize(positions)]))
+        if args.straw:
+            pool = [p for p in positions if (args.tank is None or p.tank == args.tank)
+                    and (args.kat == "hepsi" or (args.kat == "harfli") == bool(p.suffix))]
+            plans = suggest(pool, args.straw, colored=not args.renksiz, limit=args.limit)
+            print(f"\n{args.straw} straw için öneriler (Tank {args.tank or 'hepsi'}, kat: {args.kat}):")
+            print("\n".join(f"  {i}. {describe_plan(p)}" for i, p in enumerate(plans, 1)) or "  uygun yer bulunamadı")
+    finally:
+        be.close()
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="tank_haritasi", description="OneDrive tank haritası düzenleyici (silme yok).")
     p.add_argument("--production", action="store_true", help="TEST yerine gerçek dosyayı kullan")
@@ -233,6 +255,11 @@ def build_parser() -> argparse.ArgumentParser:
     s = sub.add_parser("gui", help="Tarayıcı arayüzünü başlat (yalnızca bu bilgisayardan erişilir)")
     s.add_argument("--port", type=int, default=0); s.set_defaults(fn=cmd_gui)
     sub.add_parser("profile", help="Hasta verisini göstermeden dosya yapısını özetle").set_defaults(fn=cmd_profile)
+    s = sub.add_parser("yerler", help="Konum/boş yer özeti ve yer önerisi (kişi adı göstermez)")
+    s.add_argument("--tank", type=int); s.add_argument("--straw", type=int, help="önerilecek straw sayısı")
+    s.add_argument("--kat", choices=["harfli", "harfsiz", "hepsi"], default="hepsi")
+    s.add_argument("--renksiz", action="store_true", help="renk kuralı uygulanmasın (rapidi)")
+    s.add_argument("--limit", type=int, default=5); s.set_defaults(fn=cmd_yerler)
     sub.add_parser("sheets", help="Sayfaları listele").set_defaults(fn=cmd_sheets)
     s = sub.add_parser("show", help="Aralığı göster"); s.add_argument("sheet")
     s.add_argument("--range", default="A1:L30"); s.set_defaults(fn=cmd_show)
