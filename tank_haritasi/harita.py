@@ -62,6 +62,10 @@ class Row:
     color: str | None
     vial: str
     date_text: str = ""
+    soyad: str = ""
+    ad: str = ""
+    esi: str = ""
+    hucre: str = ""
 
 
 @dataclass
@@ -163,7 +167,9 @@ def scan_sheet(sheet: str, cells: dict[tuple[int, int], object]) -> list[Positio
             vial = text.get((r, cols["vial"]), "")
             occupied = any(text.get((r, cols[f]), "") for f in ("soyad", "ad", "hucre", "vial"))
             pos.rows.append(Row(r, {f: (r, cols[f]) for f in FIELDS}, occupied, vial_color(vial), vial,
-                                text.get((r, cols["tarih"]), "")))
+                                text.get((r, cols["tarih"]), ""), text.get((r, cols["soyad"]), ""),
+                                text.get((r, cols["ad"]), ""), text.get((r, cols["esi"]), ""),
+                                text.get((r, cols["hucre"]), "")))
             prev = (r, key)
     return out
 

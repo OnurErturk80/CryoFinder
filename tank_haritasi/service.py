@@ -11,7 +11,7 @@ from openpyxl.utils.cell import get_column_letter
 
 from .backup import BackupError
 from .editor import Change, apply_change, evaluate, log_evaluation
-from .harita import COLORS, STRAW_TYPES, Position, scan_sheet, suggest, tr_upper, vial_text
+from .harita import COLORS, STRAW_TYPES, Position, fold, scan_sheet, suggest, tr_upper, vial_text
 from .sheetutil import CELL_RE
 
 CACHE_TTL = 20.0
@@ -28,6 +28,7 @@ class EditService:
         self._backup_logged = False
         self._plans: dict[str, object] = {}
         self._regs: dict[str, list[Change]] = {}
+        self._rems: dict[str, dict] = {}
 
     # ---- okuma
     def _cells(self, sheet: str, fresh: bool = False) -> dict:
@@ -51,6 +52,7 @@ class EditService:
             max_row = max((r for r, _ in cells), default=1)
             max_col = max((c for _, c in cells), default=1)
             row0 = max(1, min(row0, max_row))
+            nrows = max(1, min(nrows, 5000))
             rows = [[str(cells.get((r, c), "")) for c in range(1, max_col + 1)]
                     for r in range(row0, min(row0 + nrows, max_row + 1))]
             return {"sheet": sheet, "row0": row0, "max_row": max_row, "max_col": max_col,
@@ -307,3 +309,89 @@ class EditService:
             return {"ok": True, "backup": info["path"], "count": done,
                     "message": "Hazırlandı; 'OneDrive'a yükle' ile tamamlayın." if self.backend.needs_commit
                     else f"Kayıt yazıldı ({done} hücre)."}
+
+
+    # ---- hasta çıkarma: satırın hücrelerini boşaltır (dosya/satır silinmez)
+    CLEAR_FIELDS = ("soyad", "ad", "esi", "tarih", "hucre", "vial")
+
+    def rem_search(self, query: str) -> dict:
+        q = fold(query)
+        if len(q) < 2:
+            return {"ok": False, "message": "En az 2 harf yazın."}
+        hits = []
+        with self.lock:
+            for p in self._scan_all():
+                for r in p.rows:
+                    full = (fold(f"{r.soyad} {r.ad}"), fold(f"{r.ad} {r.soyad}"))
+                    if (r.soyad or r.ad) and any(q in f for f in full):
+                        hits.append({"sheet": p.sheet, "tank": p.tank, "canister": p.canister, "label": p.label,
+                                     "kat": p.kat, "row": r.row, "col": r.cells["no"][1], "soyad": r.soyad, "ad": r.ad, "esi": r.esi,
+                                     "tarih": r.date_text, "hucre": r.hucre, "vial": r.vial})
+        hits.sort(key=lambda h: (h["sheet"], h["tank"] or 0, h["canister"] or 0, h["row"]))
+        return {"ok": True, "hits": hits[:200], "truncated": len(hits) > 200}
+
+    def rem_preview(self, items: list[dict]) -> dict:
+        if not items or len(items) > 40:
+            return {"ok": False, "message": "1–40 satır seçin."}
+        with self.lock:
+            # Aynı sayfada canister blokları yan yana olduğundan satır, NO sütunuyla (blok) birlikte tanımlanır.
+            rows = {(p.sheet, r.row, r.cells["no"][1]): r for p in self._scan_all() for r in p.rows}
+            changes, olds, preview = [], {}, []
+            seen = set()
+            for it in items:
+                key = (str(it.get("sheet")), int(it.get("row")), int(it.get("col")))
+                row = rows.get(key)
+                if row is None or not (row.soyad or row.ad) or key in seen:
+                    return {"ok": False, "message": "Satır bulunamadı veya artık dolu değil; aramayı yenileyin."}
+                seen.add(key)
+                shown = {"soyad": row.soyad, "ad": row.ad, "esi": row.esi, "tarih": row.date_text,
+                         "hucre": row.hucre, "vial": row.vial}
+                for f in self.CLEAR_FIELDS:
+                    rr, cc = row.cells[f]
+                    ch = Change(key[0], f"{get_column_letter(cc)}{rr}", "")
+                    ev = evaluate(self.backend, ch)
+                    if ev["kind"] == "unchanged":
+                        continue
+                    if ev["kind"] != "ok":
+                        return {"ok": False, "message": f"{ch.sheet}!{ch.cell}: {ev['message']}"}
+                    changes.append(ch)
+                    olds[(ch.sheet, ch.cell)] = ev["old"]
+                    preview.append({"where": f"{ch.sheet}!{ch.cell}", "old": shown[f], "new": ""})
+            if not changes:
+                return {"ok": False, "message": "Temizlenecek dolu hücre yok."}
+            rid = secrets.token_urlsafe(9)
+            self._rems[rid] = {"changes": changes, "olds": olds}
+            return {"ok": True, "id": rid, "changes": preview, "count": len(changes), "rows": len(seen)}
+
+    def rem_apply(self, rid: str) -> dict:
+        with self.lock:
+            rem = self._rems.pop(rid, None)
+            if not rem:
+                return {"ok": False, "message": "Bu işlem artık geçerli değil; yeniden önizleyin."}
+            for ch in rem["changes"]:                # onay sırasında hücreler değişmişse hiçbir şey silinmez
+                ev = evaluate(self.backend, ch)
+                if ev["kind"] != "ok" or ev["old"] != rem["olds"][(ch.sheet, ch.cell)]:
+                    return {"ok": False, "message": "Satırlar siz onaylarken değişmiş. Hiçbir şey silinmedi; "
+                                                    "aramayı yenileyip tekrar deneyin."}
+            try:
+                info = self.backuper.ensure()
+            except BackupError as e:
+                return {"ok": False, "message": str(e)}
+            if not self._backup_logged:
+                self.log.record("backup", **info)
+                self._backup_logged = True
+            done = 0
+            for ch in rem["changes"]:
+                try:
+                    apply_change(self.backend, ch, rem["olds"][(ch.sheet, ch.cell)], self.log)
+                except Exception as e:  # noqa: BLE001
+                    return {"ok": False, "message": f"{done}/{len(rem['changes'])} hücre temizlendikten sonra hata: {e}. "
+                                                    "Kısmi temizlik olabilir; haritayı kontrol edin."}
+                done += 1
+                if self.backend.needs_commit:
+                    self.staged.append(ch)
+            self.log.record("removal", cells=done, backup=info["path"])
+            self._cache.clear()
+            return {"ok": True, "count": done, "backup": info["path"],
+                    "message": "Hazırlandı; 'OneDrive'a yükle' ile tamamlayın." if self.backend.needs_commit
+                    else f"{done} hücre temizlendi. Yedek: {info['path']}"}

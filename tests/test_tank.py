@@ -477,3 +477,97 @@ def test_registration_http_endpoints(tmp_path):
         assert sug["ok"] and sug["plans"]
     finally:
         srv.shutdown()
+
+
+# ---- hasta çıkarma (hücre temizleme)
+def register_patient(svc, n=2, straw_type="CRYOLOCK"):
+    plan = svc.reg_suggest(1, n, "otomatik")["plans"][0]
+    pl = plan["placements"][0]
+    prev = svc.reg_preview(plan["id"], straw_type, [{"color": c, "hucre": "D5 (4AA)"} for c in pl["colors"]], PATIENT)
+    assert svc.reg_apply(prev["id"])["ok"]
+    return pl["rows"]
+
+
+def test_removal_clears_cells_keeps_label_makes_backup_and_logs(tmp_path):
+    fake, svc = make_reg_service(tmp_path)
+    rows = register_patient(svc)
+    n_backups = lambda: sum(v["path"].startswith("Yedekler/T") for v in fake.items.values())
+    hits = svc.rem_search("yilmaz")["hits"]                      # 'yilmaz' ~ 'YILMAZ' (Türkçe harf duyarsız)
+    assert [h["row"] for h in hits] == rows and hits[0]["ad"] == "AYŞE" and hits[0]["kat"] == "alt"
+    prev = svc.rem_preview([{"sheet": h["sheet"], "row": h["row"], "col": h["col"]} for h in hits])
+    assert prev["ok"] and prev["rows"] == 2 and prev["count"] == 10 and all(c["new"] == "" for c in prev["changes"])
+    before = fake.items["ID1"]["data"]
+    res = svc.rem_apply(prev["id"])
+    assert res["ok"] and res["count"] == 10
+    ws = sheet_of(fake)
+    for r in rows:
+        assert [ws.cell(r, c).value for c in range(2, 8)] == [None] * 6      # SOYAD..VİAL boş
+        assert ws.cell(r, 1).value == "3A"                                      # NO etiketi kalır
+    assert svc.rem_search("yilmaz")["hits"] == []
+    log = (tmp_path / "log.jsonl").read_text(encoding="utf-8")
+    assert '"removal"' in log and "YILMAZ" in log                               # eski değerler kayıtta
+    assert n_backups() >= 1 and fake.log and not any(m == "DELETE" for m, _ in fake.log)
+
+
+def test_removal_frees_the_color_again(tmp_path):
+    fake, svc = make_reg_service(tmp_path)
+    rows = register_patient(svc)
+    hits = svc.rem_search("yilmaz")["hits"]
+    svc.rem_apply(svc.rem_preview([{"sheet": h["sheet"], "row": h["row"], "col": h["col"]} for h in hits])["id"])
+    plan = svc.reg_suggest(1, 2, "otomatik")["plans"][0]
+    assert plan["placements"][0]["rows"] == rows and plan["placements"][0]["colors"] == ["MAVİ", "SARI"]
+
+
+def test_removal_partial_selection_and_validation(tmp_path):
+    fake, svc = make_reg_service(tmp_path)
+    rows = register_patient(svc)
+    first = svc.rem_search("yilmaz")["hits"][0]
+    sheet, col = first["sheet"], first["col"]
+    assert not svc.rem_search("y")["ok"]                                          # çok kısa
+    assert not svc.rem_preview([])["ok"]
+    assert not svc.rem_preview([{"sheet": sheet, "row": 999, "col": col}])["ok"]              # olmayan satır
+    assert not svc.rem_preview([{"sheet": sheet, "row": rows[0], "col": col}] * 2)["ok"]
+    assert not svc.rem_preview([{"sheet": sheet, "row": rows[0], "col": 9}])["ok"]                # başka blok: o satır boş  # yinelenen
+    prev = svc.rem_preview([{"sheet": sheet, "row": rows[0], "col": col}])        # yalnızca ilk straw
+    assert svc.rem_apply(prev["id"])["ok"]
+    ws = sheet_of(fake)
+    assert ws.cell(rows[0], 2).value is None and ws.cell(rows[1], 2).value == "YILMAZ"
+    assert not svc.rem_apply(prev["id"])["ok"]                                    # tek kullanımlık
+
+
+def test_removal_aborts_when_row_changed_before_approval(tmp_path):
+    fake, svc = make_reg_service(tmp_path)
+    rows = register_patient(svc)
+    first = svc.rem_search("yilmaz")["hits"][0]
+    prev = svc.rem_preview([{"sheet": first["sheet"], "row": rows[0], "col": first["col"]}])
+    wb = load_workbook(io.BytesIO(fake.items["ID1"]["data"]))
+    wb["TANK 5"].cell(rows[0], 2).value = "BAŞKASI"
+    b = io.BytesIO(); wb.save(b); fake.external_edit(PATH, b.getvalue())
+    res = svc.rem_apply(prev["id"])
+    assert not res["ok"] and "Hiçbir şey silinmedi" in res["message"]
+    assert sheet_of(fake).cell(rows[0], 2).value == "BAŞKASI"
+
+
+def test_removal_memory_mode_and_http(tmp_path):
+    fake, svc = make_reg_service(tmp_path, excel_api=False)
+    rows = register_patient(svc)
+    assert svc.commit()["ok"]
+    hits = svc.rem_search("ayşe")["hits"]
+    assert len(hits) == 2
+    prev = svc.rem_preview([{"sheet": h["sheet"], "row": h["row"], "col": h["col"]} for h in hits])
+    assert svc.rem_apply(prev["id"])["ok"] and svc.commit()["ok"]
+    assert sheet_of(fake).cell(rows[0], 2).value is None
+    srv, token = make_server(svc, tmp_path / "log.jsonl"); serve_in_thread(srv)
+    base = f"http://127.0.0.1:{srv.server_address[1]}"
+    try:
+        assert _call(base + "/api/rem/search", body={"q": "ab"})[0] == 403
+        ok = json.loads(_call(base + "/api/rem/search", token=token, body={"q": "soyad"})[1])
+        assert ok["ok"]
+    finally:
+        srv.shutdown()
+
+
+def test_sheet_view_can_return_whole_sheet(tmp_path):
+    fake, svc = make_reg_service(tmp_path)
+    v = svc.sheet_view("TANK 5", 1, 5000)
+    assert v["max_row"] >= 36 and len(v["rows"]) == v["max_row"] and v["row0"] == 1

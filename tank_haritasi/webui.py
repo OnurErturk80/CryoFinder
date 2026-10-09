@@ -101,6 +101,12 @@ def make_server(service: EditService, log_path, port: int = 0) -> tuple[Threadin
                                                    list(body["straws"]), dict(body["patient"])))
                 elif url.path == "/api/reg/apply":
                     self._json(service.reg_apply(str(body["id"])))
+                elif url.path == "/api/rem/search":
+                    self._json(service.rem_search(str(body.get("q", ""))))
+                elif url.path == "/api/rem/preview":
+                    self._json(service.rem_preview(list(body["items"])))
+                elif url.path == "/api/rem/apply":
+                    self._json(service.rem_apply(str(body["id"])))
                 elif url.path == "/api/decline":
                     self._json(service.decline(body["id"]))
                 elif url.path == "/api/commit/prepare":
@@ -151,13 +157,13 @@ td.c{cursor:pointer}td.c:hover{outline:2px solid var(--acc);outline-offset:-2px}
 #results{max-height:160px;overflow:auto;margin-bottom:8px}#results div{padding:3px 6px;cursor:pointer;border-radius:6px}#results div:hover{background:var(--bg)}
 pre{white-space:pre-wrap;font-size:11px;color:var(--mut);max-height:180px;overflow:auto;margin:0}
 </style></head><body>
-<header><b id="file">…</b><button id="tabMap" class="p">Harita</button><button id="tabReg">Yeni hasta</button><span class="pill" id="mode"></span><span class="pill prod" id="prod" hidden>GERÇEK DOSYA</span>
+<header><b id="file">…</b><button id="tabMap" class="p">Harita</button><button id="tabReg">Yeni hasta</button><button id="tabRem">Hasta çıkar</button><span class="pill" id="mode"></span><span class="pill prod" id="prod" hidden>GERÇEK DOSYA</span>
 <span class="pill" id="bk"></span><span style="flex:1"></span><span id="pend" class="mut"></span>
 <button class="p" id="commit" hidden>OneDrive'a yükle…</button></header>
 <main id="mapView">
 <section class="card">
   <div class="bar"><select id="sheet"></select><input id="q" placeholder="Ara (en az 2 harf)…" size="22">
-   <button id="refresh">Yenile</button><button id="prev">◀</button><button id="next">▶</button><span class="mut" id="range"></span></div>
+   <button id="refresh">Yenile</button><select id="per" title="Sayfa başına satır"><option value="50">50 satır</option><option value="100">100 satır</option><option value="250">250 satır</option><option value="5000">Tümü</option></select><button id="prev">◀</button><button id="next">▶</button><span class="mut" id="range"></span></div>
   <div id="results"></div>
   <div id="wrap"><table id="grid"></table></div>
 </section>
@@ -208,6 +214,23 @@ pre{white-space:pre-wrap;font-size:11px;color:var(--mut);max-height:180px;overfl
   <div id="rMsg" style="margin-top:10px"></div>
 </section>
 </main>
+<main id="remView" hidden style="grid-template-columns:1fr">
+<section class="card">
+  <h3 style="margin-top:0">Hasta çıkar (satırın hücrelerini temizler)</h3>
+  <div class="bar"><input id="xq" placeholder="Soyad veya ad (en az 2 harf)" size="28"><button class="p" id="xSearch">Ara</button></div>
+  <div class="mut" id="xInfo"></div>
+  <div style="max-height:320px;overflow:auto"><table id="xHits"></table></div>
+  <div class="bar" style="margin-top:10px"><button id="xPreview">Seçilenleri önizle</button></div>
+</section>
+<section class="card" id="xStep2" hidden>
+  <h3 style="margin-top:0">Temizlenecek hücreler</h3>
+  <div style="max-height:260px;overflow:auto"><table id="xChanges"></table></div>
+  <div class="mut" style="margin:8px 0">Dosya ve satırlar silinmez; yalnızca bu hücrelerin içeriği boşaltılır, <b>NO</b> etiketi kalır.
+   Onaylarsanız önce OneDrive'daki <b>Yedekler</b> klasörüne yedek alınır. Eski değerler değişiklik kaydında da tutulur.</div>
+  <button class="d" id="xApply">Onayla ve temizle</button> <button id="xCancel">Vazgeç</button>
+  <div id="xMsg" style="margin-top:10px"></div>
+</section>
+</main>
 <script>
 const TOKEN="__TOKEN__";const $=id=>document.getElementById(id);
 async function api(path,body){
@@ -228,7 +251,7 @@ async function loadSheet(fresh){const v=await api(`/api/sheet?name=${encodeURICo
   v.rows.forEach((r,i)=>{const tr=t.insertRow();const rn=tr.insertCell();rn.className="rn";rn.textContent=v.row0+i;
     r.forEach((val,j)=>{const td=tr.insertCell();td.className="c";td.textContent=val;td.title=val;
       td.onclick=()=>pick(v.cols[j]+(v.row0+i),val,td);});});
-  $("range").textContent=`satır ${v.row0}–${Math.min(v.row0+49,v.max_row)} / ${v.max_row}`;}
+  const per=+$("per").value;$("range").textContent=`satır ${v.row0}–${Math.min(v.row0+per-1,v.max_row)} / ${v.max_row}, ${v.max_col} sütun`;}
 function pick(addr,val,td){document.querySelectorAll("td.sel").forEach(x=>x.classList.remove("sel"));if(td)td.classList.add("sel");
   sel={sheet:$("sheet").value,cell:addr};$("addr").textContent=sel.sheet+" ! "+addr;$("cur").textContent=val===""?"(boş)":val;
   $("nv").value="";$("idle").hidden=true;$("edit").hidden=false;$("confirm").hidden=true;msg("");}
@@ -249,14 +272,35 @@ let qt;$("q").oninput=()=>{clearTimeout(qt);qt=setTimeout(async()=>{const q=$("q
    d.onclick=async()=>{$("sheet").value=h.sheet;row0=Math.max(1,h.row-3);await loadSheet();box.textContent="";};box.appendChild(d);});
   if(!r.hits.length)box.textContent="Eşleşme yok.";},300);};
 $("sheet").onchange=()=>{row0=1;loadSheet();};$("refresh").onclick=()=>loadSheet(true);
-$("prev").onclick=()=>{row0=Math.max(1,row0-50);loadSheet();};$("next").onclick=()=>{if(view&&row0+50<=view.max_row){row0+=50;loadSheet();}};
+$("per").onchange=()=>{row0=1;loadSheet();};
+$("prev").onclick=()=>{row0=Math.max(1,row0-+$("per").value);loadSheet();};
+$("next").onclick=()=>{const per=+$("per").value;if(view&&row0+per<=view.max_row){row0+=per;loadSheet();}};
 async function logs(){const r=await api("/api/log");$("log").textContent=r.lines.map(l=>{try{const e=JSON.parse(l);
   return e.ts.slice(11,19)+" "+e.event+(e.cell?" "+e.sheet+"!"+e.cell:"");}catch(_){return l;}}).join("\n");}
 /* ---- Yeni hasta */
 let R={plans:[],plan:null,regId:null};
-function show(view){$("mapView").hidden=view!=="map";$("regView").hidden=view!=="reg";
-  $("tabMap").className=view==="map"?"p":"";$("tabReg").className=view==="reg"?"p":"";if(view==="reg")regInit();}
-$("tabMap").onclick=()=>show("map");$("tabReg").onclick=()=>show("reg");
+function show(view){$("mapView").hidden=view!=="map";$("regView").hidden=view!=="reg";$("remView").hidden=view!=="rem";
+  $("tabMap").className=view==="map"?"p":"";$("tabReg").className=view==="reg"?"p":"";$("tabRem").className=view==="rem"?"p":"";
+  if(view==="reg")regInit();}
+$("tabMap").onclick=()=>show("map");$("tabReg").onclick=()=>show("reg");$("tabRem").onclick=()=>show("rem");
+/* ---- Hasta çıkar */
+let X={regId:null};
+function xmsg(t,cls){$("xMsg").textContent=t||"";$("xMsg").className=cls||"";}
+$("xSearch").onclick=async()=>{xmsg("");$("xStep2").hidden=true;const t=$("xHits");t.textContent="";
+  const r=await api("/api/rem/search",{q:$("xq").value});if(!r.ok){$("xInfo").textContent=r.message;return;}
+  $("xInfo").textContent=r.hits.length?`${r.hits.length} satır bulundu${r.truncated?" (ilk 200)":""}. Temizlenecekleri işaretleyin.`:"Eşleşme yok.";
+  if(!r.hits.length)return;const h=t.insertRow();["","Konum","Satır","Soyad","Ad","Eşi","Tarih","HÜCRE","VİAL"].forEach(x=>{const c=document.createElement("th");c.textContent=x;h.appendChild(c);});
+  r.hits.forEach(x=>{const tr=t.insertRow();const cb=document.createElement("input");cb.type="checkbox";cb.dataset.sheet=x.sheet;cb.dataset.row=x.row;cb.dataset.col=x.col;tr.insertCell().appendChild(cb);
+    [`Tank ${x.tank||"?"} / C${x.canister||"?"} / ${x.label} (${x.kat})`,x.row,x.soyad,x.ad,x.esi,x.tarih,x.hucre,x.vial].forEach(v=>tr.insertCell().textContent=v);});};
+$("xPreview").onclick=async()=>{xmsg("");const items=[...$("xHits").querySelectorAll("input:checked")].map(c=>({sheet:c.dataset.sheet,row:+c.dataset.row,col:+c.dataset.col}));
+  const r=await api("/api/rem/preview",{items});if(!r.ok){$("xStep2").hidden=true;alert(r.message);return;}X.regId=r.id;
+  const t=$("xChanges");t.textContent="";const h=t.insertRow();["Hücre","Eski","Yeni"].forEach(x=>{const c=document.createElement("th");c.textContent=x;h.appendChild(c);});
+  r.changes.forEach(c=>{const tr=t.insertRow();tr.insertCell().textContent=c.where;tr.insertCell().textContent=c.old;tr.insertCell().textContent="(boş)";});
+  $("xStep2").hidden=false;};
+$("xApply").onclick=async()=>{if(!confirm("Seçilen satırların hücreleri temizlenecek. Emin misiniz?"))return;$("xApply").disabled=true;
+  const r=await api("/api/rem/apply",{id:X.regId});$("xApply").disabled=false;xmsg(r.message,r.ok?"ok":"bad");
+  if(r.ok){X.regId=null;$("xHits").textContent="";$("xInfo").textContent="";await state();}logs();};
+$("xCancel").onclick=()=>{X.regId=null;$("xStep2").hidden=true;xmsg("Vazgeçildi.");};
 function rmsg(t,cls){$("rMsg").textContent=t||"";$("rMsg").className=cls||"";}
 async function regInit(){const o=await api("/api/reg/options");const t=$("rTank");const keep=t.value;t.textContent="";
   o.tanks.forEach(n=>t.add(new Option(`Tank ${n} (${o.free_rows[n]} boş satır)`,n)));if(keep)t.value=keep;

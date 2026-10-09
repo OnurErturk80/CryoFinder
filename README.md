@@ -48,6 +48,13 @@ yeniden denetlenir. Kat sayfadan belirlenir (adında "üst" geçen sayfa = üst 
 konumlar, TANK 4 ve küçük tank şimdilik desteklenmez. `python3 -m tank_haritasi yerler --detay` haritanın nasıl
 algılandığını (kişi adı göstermeden) özetler.
 
+## Hasta çıkarma (arayüzde "Hasta çıkar" sekmesi)
+Soyad/ad ile arama → temizlenecek straw satırlarını işaretleme → önizleme (eski değerler, yeni = boş) → onay. Yalnızca
+SOYAD, AD, EŞİ, TARİH, HÜCRE ve VİAL hücrelerinin **içeriği** boşaltılır; dosya, satır ve NO etiketi silinmez (programda
+silme isteği/HTTP DELETE yoktur). Önce yedek alınır; eski değerler değişiklik kaydında tutulur. Onay sırasında satır
+başkasınca değiştirilmişse hiçbir şey silinmez. Boşalan renk, o goblet için yeniden seçilebilir olur.
+Harita sekmesinde "Tümü" seçeneğiyle sayfanın tamamı tek seferde listelenir.
+
 ## Bellek-içi yöntemin sınırları
 Yükleme öncesi doğrulanır: yalnızca onaylı hücreler değişti mi; grafik/resim/pivot gibi parçalar kaybolacak mı
 (kaybolacaksa yüklenmez). Formüllerin önbellek değerleri Excel açıldığında yeniden hesaplanır.
