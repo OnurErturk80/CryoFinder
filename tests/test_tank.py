@@ -346,3 +346,12 @@ def test_lower_levels_suggested_before_upper_levels():
     ps = [pos("A", 1), pos("", 2)]            # canister 1'in ÜST katı, canister 2'nin ALT katı
     first = suggest(ps, 2)[0].placements[0].position
     assert first.kat == "alt" and first.canister == 2
+
+
+def test_layout_detail_and_rapidi_not_unknown():
+    from tank_haritasi.harita import describe_layout
+    cells = make_map_cells()
+    ps = scan_sheet("S", cells)
+    text = "\n".join(describe_layout("S", cells, ps))
+    assert "A1='TANK 1'" in text and "A3='CANISTER 1'" in text and "satır 5–36" in text and "SOYAD" not in text
+    assert next(p for p in ps if p.canister == 1 and p.label == "1A").unknown_occupied == 0  # rapidi renksiz, belirsiz değil

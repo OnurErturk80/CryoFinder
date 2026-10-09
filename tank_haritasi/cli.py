@@ -17,7 +17,7 @@ from .excel_api import ExcelApiBackend, probe
 from .graph import GraphClient, GraphError
 from .memory import MemoryBackend
 from .onedrive import ConflictError
-from .harita import describe_plan, scan_sheet, summarize, suggest
+from .harita import describe_layout, describe_plan, scan_sheet, summarize, suggest
 from .profile import profile_workbook
 from .service import EditService
 from .webui import make_server
@@ -227,7 +227,10 @@ def cmd_yerler(args, cfg, client, tp):
     try:
         positions = []
         for name in be.sheet_names():
-            found = scan_sheet(name, be.dump(name, text=True))
+            cells = be.dump(name, text=True)
+            found = scan_sheet(name, cells)
+            if args.detay:
+                print("\n".join(describe_layout(name, cells, found)))
             print(f"[{name}] {'konum algılanamadı (desteklenmeyen düzen)' if not found else f'{len(found)} konum'}")
             positions += found
         print("\n".join(["", *summarize(positions)]))
@@ -260,7 +263,9 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--kat", choices=["alt", "ust", "hepsi"], default="hepsi",
                    help="alt = etiketsiz konumlar (1, 2...), ust = 'A' ekli (1A, 2A...)")
     s.add_argument("--renksiz", action="store_true", help="renk kuralı uygulanmasın (rapidi)")
-    s.add_argument("--limit", type=int, default=5); s.set_defaults(fn=cmd_yerler)
+    s.add_argument("--limit", type=int, default=5)
+    s.add_argument("--detay", action="store_true", help="TANK/CANISTER işaretlerini ve satır/sütun aralıklarını göster")
+    s.set_defaults(fn=cmd_yerler)
     sub.add_parser("sheets", help="Sayfaları listele").set_defaults(fn=cmd_sheets)
     s = sub.add_parser("show", help="Aralığı göster"); s.add_argument("sheet")
     s.add_argument("--range", default="A1:L30"); s.set_defaults(fn=cmd_show)

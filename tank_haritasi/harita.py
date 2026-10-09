@@ -33,6 +33,14 @@ def vial_text(straw_type: str, color: str) -> str:
     return f"1 {straw_type}{color}"
 
 
+def vial_kind(text) -> str | None:
+    f = fold(text)
+    for key, name in (("RAPIDI", "RAPIDI"), ("VITRIFIT", "VİTRİFİT"), ("CRYOLOCK", "CRYOLOCK"), ("CRYOTOP", "CRYOTOP")):
+        if key in f:
+            return name
+    return None
+
+
 def vial_color(text) -> str | None:
     f = fold(text)
     for key, color in _COLOR_FOLDED.items():
@@ -83,8 +91,8 @@ class Position:
 
     @property
     def unknown_occupied(self) -> int:
-        """Dolu ama rengi okunamayan satır (rapidi gibi renksizler dahil)."""
-        return sum(1 for r in self.rows if r.occupied and not r.color)
+        """Dolu ama rengi okunamayan satır (rapidi renksiz olduğu için sayılmaz)."""
+        return sum(1 for r in self.rows if r.occupied and not r.color and vial_kind(r.vial) != "RAPIDI")
 
 
 FIELDS = ["no", "soyad", "ad", "esi", "tarih", "hucre", "vial"]
@@ -227,3 +235,25 @@ def describe_plan(plan: Plan) -> str:
         rows = f"satır {pl.rows[0].row}" + (f"–{pl.rows[-1].row}" if len(pl.rows) > 1 else "")
         parts.append(f"{pl.position.name} ({rows}): {cols}   [boş renkler: {', '.join(pl.position.free_colors) or '-'}]")
     return " → ".join(parts) if len(parts) == 1 else "\n      ".join(parts)
+
+
+def describe_layout(sheet: str, cells: dict, positions: list[Position]) -> list[str]:
+    """Kişisel veri içermez: TANK/CANISTER işaret hücreleri ve her grubun sütun/satır/goblet aralığı."""
+    lines = [f"--- {sheet} ---"]
+    marks = []
+    for (r, c), v in sorted(cells.items()):
+        f = fold(v)
+        if TANK_RE.match(f) or CAN_RE.match(f) or f.startswith("KUCUK TANK"):
+            marks.append(f"{get_column_letter(c)}{r}='{str(v).strip()}'")
+    lines.append("İşaret hücreleri: " + (", ".join(marks) or "yok"))
+    groups = defaultdict(list)
+    for p in positions:
+        groups[(p.tank, p.canister, p.suffix, p.rows[0].cells["no"][1])].append(p)
+    for (tank, can, suf, col), ps in sorted(groups.items(), key=lambda kv: (kv[0][3], kv[1][0].rows[0].row)):
+        rows = [r.row for p in ps for r in p.rows]
+        nums = sorted({p.number for p in ps})
+        sizes = Counter(len(p.rows) for p in ps)
+        lines.append(f"  sütun {get_column_letter(col)}: Tank {tank or '?'} / Canister {can or '?'} / "
+                     f"{'üst(A)' if suf else 'harfsiz'}: satır {min(rows)}–{max(rows)}, goblet {nums[0]}–{nums[-1]} "
+                     f"({len(ps)} konum; satır sayıları {dict(sorted(sizes.items()))})")
+    return lines
