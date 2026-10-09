@@ -70,8 +70,14 @@ class Position:
 
     @property
     def kat(self) -> str:
-        """Etiketsiz (1, 2, ...) = alt kat; 'A' ekli (1A, 2A, ...) = üst kat."""
-        return "üst" if self.suffix else "alt"
+        """Kat sayfadan belli olur: adında 'ÜST' geçen sayfa üst kat, diğerleri alt kat.
+        'A' eki yalnızca o gobletin üst katının kullanıldığını gösteren bir işarettir."""
+        return "üst" if "UST" in fold(self.sheet) else "alt"
+
+    @property
+    def standard(self) -> bool:
+        """Standart konum: tam 4 satır. Daha kısa/uzun gruplar (not, ek kayıt, bozuk blok) öneride kullanılmaz."""
+        return len(self.rows) == SLOTS
 
     @property
     def name(self) -> str:
@@ -108,7 +114,17 @@ def scan_sheet(sheet: str, cells: dict[tuple[int, int], object]) -> list[Positio
         names = sum(1 for (r, cc), v in text.items() if cc == c + 1 and not re.search(r"\d", v))
         if n >= 20 and names >= 10:
             blocks.append(c)
-    tanks = sorted((r, int(m[1])) for (r, c), v in text.items() if (m := TANK_RE.match(fold(v))))
+    first_col = blocks[0] if blocks else 1
+    tanks = []
+    for (r, c), v in text.items():
+        if c != first_col:          # başka sütundaki "TANK n" yazıları (küçük tank vb.) bölüm başlığı değildir
+            continue
+        f = fold(v)
+        if m := TANK_RE.match(f):
+            tanks.append((r, int(m[1])))
+        elif f.startswith("KUCUK TANK"):
+            tanks.append((r, 0))    # 0 = küçük tank bölgesi: bu satırlardan sonrası haritaya dahil edilmez
+    tanks.sort()
     cans = sorted((r, c, int(m[1])) for (r, c), v in text.items() if (m := CAN_RE.match(fold(v))))
 
     def current(markers, row):
@@ -129,6 +145,8 @@ def scan_sheet(sheet: str, cells: dict[tuple[int, int], object]) -> list[Positio
         for r, lab in no_rows:
             m = POS_RE.match(lab)
             tank = current(tanks, r)
+            if tank and tank[1] == 0:
+                continue
             can = current(block_cans, r)
             key = (tank[1] if tank else None, can[2] if can else bi + 1, lab)
             pos = out[-1] if out and prev else None
@@ -173,11 +191,12 @@ def suggest(positions: list[Position], n: int, colored: bool = True, limit: int 
     """n straw için en az konuma yayılan, komşu konumlardaki planlar. Aynı konumda renkler farklıdır."""
     groups: dict[tuple, list[Position]] = defaultdict(list)
     for p in positions:
-        groups[(p.sheet, p.tank, p.canister, p.suffix)].append(p)
+        if p.standard:
+            groups[(p.sheet, p.tank, p.canister, p.kat)].append(p)
     plans: list[tuple[tuple, Plan]] = []
     # Önce tüm alt katlar (canister sırasıyla), sonra üst katlar: üst kata, alt kat dolunca geçilir.
-    order = sorted(groups.items(), key=lambda kv: (1 if kv[0][3] else 0, str(kv[0][0]), kv[0][1] or 0,
-                                                   kv[0][2] or 0, kv[0][3]))
+    order = sorted(groups.items(), key=lambda kv: (1 if kv[0][3] == "üst" else 0, str(kv[0][0]),
+                                                   kv[0][1] or 0, kv[0][2] or 0))
     for gi, (gkey, plist) in enumerate(order):
         plist.sort(key=lambda p: p.number)
         for i, start in enumerate(plist):
@@ -209,21 +228,21 @@ def suggest(positions: list[Position], n: int, colored: bool = True, limit: int 
 
 
 def summarize(positions: list[Position]) -> list[str]:
-    """Kişisel veri içermeyen özet: tank/canister başına konum sayıları."""
+    """Kişisel veri içermeyen özet: sayfa/tank/canister/kat başına konum sayıları."""
     by = defaultdict(list)
     for p in positions:
-        by[(p.sheet, p.tank, p.canister, p.suffix)].append(p)
+        by[(p.sheet, p.tank, p.canister, p.kat)].append(p)
     lines = []
-    for (sheet, tank, can, suf), ps in sorted(by.items(), key=lambda kv: (kv[0][0], kv[0][1] or 0, kv[0][2] or 0, kv[0][3])):
+    for (sheet, tank, can, kat), allp in sorted(by.items(), key=lambda kv: (kv[0][0], kv[0][1] or 0, kv[0][2] or 0, kv[0][3])):
+        ps = [p for p in allp if p.standard]
         empty = sum(1 for p in ps if len(p.free_rows) == len(p.rows))
         partial = sum(1 for p in ps if 0 < len(p.free_rows) < len(p.rows))
         full = sum(1 for p in ps if not p.free_rows)
-        odd = sum(1 for p in ps if len(p.rows) != SLOTS)
+        odd = len(allp) - len(ps)
         unknown = sum(p.unknown_occupied for p in ps)
-        lines.append(f"[{sheet}] Tank {tank or '?'} / Canister {can or '?'} / "
-                     f"{'üst kat (' + suf + ')' if suf else 'alt kat (harfsiz)'}: {len(ps)} konum "
+        lines.append(f"[{sheet}] Tank {tank or '?'} / Canister {can or '?'} / {kat} kat: {len(ps)} standart konum "
                      f"(tamamen boş {empty}, kısmen dolu {partial}, dolu {full}"
-                     f"{', ' + str(odd) + ' konumda 4 dışı satır' if odd else ''}"
+                     f"{', standart dışı ' + str(odd) if odd else ''}"
                      f"{', rengi okunamayan dolu satır ' + str(unknown) if unknown else ''})")
     return lines
 
@@ -254,6 +273,14 @@ def describe_layout(sheet: str, cells: dict, positions: list[Position]) -> list[
         nums = sorted({p.number for p in ps})
         sizes = Counter(len(p.rows) for p in ps)
         lines.append(f"  sütun {get_column_letter(col)}: Tank {tank or '?'} / Canister {can or '?'} / "
-                     f"{'üst(A)' if suf else 'harfsiz'}: satır {min(rows)}–{max(rows)}, goblet {nums[0]}–{nums[-1]} "
+                     f"{'A etiketli' if suf else 'harfsiz'}: satır {min(rows)}–{max(rows)}, goblet {nums[0]}–{nums[-1]} "
                      f"({len(ps)} konum; satır sayıları {dict(sorted(sizes.items()))})")
+    odd = [f"{get_column_letter(p.rows[0].cells['no'][1])}{p.rows[0].row}:{p.label}({len(p.rows)} satır)"
+           for p in positions if not p.standard]
+    lines.append("Standart dışı konumlar: " + (", ".join(odd[:60]) + (" …" if len(odd) > 60 else "") if odd else "yok"))
+    from .profile import shape
+    shapes = Counter(shape(r.vial) if r.vial else "(boş)" for p in positions if p.standard
+                     for r in p.rows if r.occupied and not r.color and vial_kind(r.vial) != "RAPIDI")
+    if shapes:
+        lines.append("Rengi okunamayan VİAL biçimleri: " + ", ".join(f"{k}×{n}" for k, n in shapes.most_common(10)))
     return lines

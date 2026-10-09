@@ -337,15 +337,29 @@ def test_suggest_colorless_uses_free_rows_only():
     assert plan.placements[0].colors == [None, None, None]
 
 
-def test_lower_levels_suggested_before_upper_levels():
+def test_level_comes_from_sheet_and_lower_levels_suggested_first():
     from tank_haritasi.harita import Position, Row
-    def pos(suffix, can):
-        label = f"1{suffix}"
-        return Position("S", 1, can, label, 1, suffix,
-                        [Row(i, {}, False, None, "") for i in range(1, 5)])
-    ps = [pos("A", 1), pos("", 2)]            # canister 1'in ÜST katı, canister 2'nin ALT katı
+    def pos(sheet, can):
+        return Position(sheet, 1, can, "1", 1, "", [Row(i, {}, False, None, "") for i in range(1, 5)])
+    ps = [pos("Tank 1-5 üst", 1), pos("TANK 5", 2)]      # canister 1'in ÜST katı, canister 2'nin ALT katı
+    assert [p.kat for p in ps] == ["üst", "alt"]
     first = suggest(ps, 2)[0].placements[0].position
     assert first.kat == "alt" and first.canister == 2
+
+
+def test_tank_marker_in_other_column_is_ignored_and_small_tank_region_skipped():
+    cells = make_map_cells()
+    cells[(2, 53)] = "TANK 3"                      # küçük tank etiketi (başka sütun) - bölüm başlığı değil
+    cells[(30, 1)] = "KÜÇÜK TANK"                  # bu satırdan sonrası haritaya dahil değil
+    ps = scan_sheet("S", cells)
+    assert {p.tank for p in ps} == {1}
+    assert all(p.rows[0].row < 30 for p in ps)
+
+
+def test_nonstandard_positions_are_never_suggested():
+    from tank_haritasi.harita import Position, Row
+    odd = Position("S", 1, 1, "9", 9, "", [Row(1, {}, False, None, "")])
+    assert not odd.standard and suggest([odd], 1) == []
 
 
 def test_layout_detail_and_rapidi_not_unknown():
