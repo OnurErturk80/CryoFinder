@@ -9,15 +9,16 @@ if ! command -v python3 >/dev/null 2>&1; then
   echo "Python 3 bulunamadı. https://www.python.org/downloads/ adresinden kurun, sonra bu dosyayı tekrar açın."
   pause_exit 1
 fi
-if [ ! -d .venv ]; then
-  echo "İlk kurulum: sanal ortam oluşturuluyor..."
-  python3 -m venv .venv || { echo "Sanal ortam oluşturulamadı."; pause_exit 1; }
+# Sanal ortam: 'activate' kullanılmaz (klasör taşınınca bozulur); doğrudan .venv içindeki python kullanılır.
+PY=".venv/bin/python"
+if [ ! -x "$PY" ] || ! "$PY" -c "import sys" >/dev/null 2>&1; then
+  echo "Sanal ortam hazırlanıyor (yalnızca ilk seferde veya bozuksa)..."
+  python3 -m venv --clear .venv || { echo "Sanal ortam oluşturulamadı."; pause_exit 1; }
 fi
-source .venv/bin/activate
-if ! python -c "import msal, openpyxl, requests" >/dev/null 2>&1; then
+if ! "$PY" -c "import msal, openpyxl, requests" >/dev/null 2>&1; then
   echo "Gerekli paketler yükleniyor (yalnızca ilk seferde, birkaç dakika sürebilir)..."
-  python -m pip install --quiet --upgrade pip
-  python -m pip install --quiet --only-binary=:all: -r requirements.txt || { echo "Paket kurulumu başarısız."; pause_exit 1; }
+  "$PY" -m pip install --quiet --upgrade pip
+  "$PY" -m pip install --quiet --only-binary=:all: -r requirements.txt || { echo "Paket kurulumu başarısız."; pause_exit 1; }
 fi
 if [ ! -f .env ] || grep -q "AZURE_CLIENT_ID=0000" .env; then
   [ -f .env ] || cp .env.example .env
@@ -28,7 +29,7 @@ if [ ! -f .env ] || grep -q "AZURE_CLIENT_ID=0000" .env; then
   pause_exit 0
 fi
 echo "Microsoft girişi gerekirse tarayıcı açılır. Program hazır olunca arayüz de açılır."
-python -m tank_haritasi gui
+"$PY" -m tank_haritasi gui
 echo
 echo "Program kapandı."
 pause_exit 0

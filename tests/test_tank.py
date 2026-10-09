@@ -697,3 +697,15 @@ def test_page_has_no_innerhtml_and_is_mobile_ready():
     from tank_haritasi.page import PAGE
     assert "innerHTML" not in PAGE and "outerHTML" not in PAGE and "document.write" not in PAGE
     assert 'name="viewport"' in PAGE and "@media(max-width:700px)" in PAGE and "env(safe-area-inset-bottom)" in PAGE
+
+
+def test_client_id_tolerates_pasted_brackets_and_quotes(monkeypatch, tmp_path):
+    from tank_haritasi.config import ConfigError, load_config
+    gid = "cbd065f9-97f9-4e0d-a508-0fd18fafcfd1"
+    empty = tmp_path / "bos.env"; empty.write_text("", encoding="utf-8")
+    for raw in (gid, f"<{gid}>", f'"{gid}"', f"  <{gid}> "):
+        monkeypatch.setenv("AZURE_CLIENT_ID", raw)
+        assert load_config(empty).client_id == gid
+    monkeypatch.setenv("AZURE_CLIENT_ID", "00000000-bozuk")
+    with pytest.raises(ConfigError):
+        load_config(empty)

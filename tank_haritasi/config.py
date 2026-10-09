@@ -43,7 +43,7 @@ class Config:
 
 def load_config(env_file: Path | None = None) -> Config:
     _load_env_file(env_file or ROOT / ".env")
-    client_id = os.environ.get("AZURE_CLIENT_ID", "").strip()
+    client_id = os.environ.get("AZURE_CLIENT_ID", "").strip().strip("<>\"' ")   # <...> ya da tırnakla yapıştırılsa da çalışsın
     if not _GUID.match(client_id):
         raise ConfigError("AZURE_CLIENT_ID eksik/geçersiz. .env.example dosyasını .env olarak kopyalayıp doldurun.")
     return Config(

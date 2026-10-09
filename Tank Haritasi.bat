@@ -8,13 +8,20 @@ if errorlevel 1 (
   pause
   exit /b 1
 )
-if not exist .venv python -m venv .venv
-call .venv\Scripts\activate.bat
-python -c "import msal, openpyxl, requests" >nul 2>nul
+set PY=.venv\Scripts\python.exe
+set NEEDVENV=0
+if not exist "%PY%" set NEEDVENV=1
+if exist "%PY%" ( "%PY%" -c "import sys" >nul 2>nul || set NEEDVENV=1 )
+if "%NEEDVENV%"=="1" (
+  echo Sanal ortam hazirlaniyor...
+  python -m venv --clear .venv
+  if errorlevel 1 ( echo Sanal ortam olusturulamadi. & pause & exit /b 1 )
+)
+"%PY%" -c "import msal, openpyxl, requests" >nul 2>nul
 if errorlevel 1 (
   echo Gerekli paketler yukleniyor ^(yalnizca ilk seferde^)...
-  python -m pip install --quiet --upgrade pip
-  python -m pip install --quiet --only-binary=:all: -r requirements.txt
+  "%PY%" -m pip install --quiet --upgrade pip
+  "%PY%" -m pip install --quiet --only-binary=:all: -r requirements.txt
   if errorlevel 1 ( echo Paket kurulumu basarisiz. & pause & exit /b 1 )
 )
 if not exist .env copy .env.example .env >nul
@@ -25,6 +32,6 @@ if not errorlevel 1 (
   pause
   exit /b 0
 )
-python -m tank_haritasi gui
+"%PY%" -m tank_haritasi gui
 echo Program kapandi.
 pause
