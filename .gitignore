@@ -1,0 +1,25 @@
+# Gizli bilgiler
+.env
+.env.*
+!.env.example
+
+# MSAL token önbelleği (refresh token içerir)
+.token_cache*
+*.bin
+
+# Değişiklik kaydı: örnek/hasta bilgisi içerebilir
+degisiklik_kaydi*
+*.jsonl
+
+# Laboratuvar verisi asla depoya girmesin
+*.xlsx
+*.xlsm
+*.xls
+*.csv
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+.pytest_cache/
