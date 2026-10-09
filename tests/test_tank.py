@@ -635,3 +635,29 @@ def test_map_endpoints_require_token(tmp_path):
         assert json.loads(_call(base + "/api/map?tank=1", token=token)[1])["ok"]
     finally:
         srv.shutdown()
+
+
+def test_page_sends_selected_rows_per_page_to_server():
+    """'Tümü' seçimi sunucuya gerçekten iletilmeli (sabit 50 kalmamalı)."""
+    from tank_haritasi.webui import PAGE
+    assert "rows=50" not in PAGE and 'rows=${$("per").value}' in PAGE
+    for v in ("50", "100", "250", "5000"):
+        assert f'<option value="{v}">' in PAGE
+
+
+def test_sheet_view_serves_requested_row_counts(tmp_path):
+    from openpyxl import Workbook
+    wb = Workbook(); ws = wb.active; ws.title = "BUYUK"
+    for r in range(1, 596):
+        for c in range(1, 60):
+            if (r + c) % 3:
+                ws.cell(r, c, f"r{r}c{c}")
+    b = io.BytesIO(); wb.save(b)
+    fake = FakeOneDrive({PATH: b.getvalue()}, excel_api=True)
+    cl = GraphClient(lambda: "tok", session=fake, sleep=lambda s: None)
+    svc = EditService(ExcelApiBackend(cl, "ID1"), Backuper(cl, "Yedekler", PATH, lambda: b.getvalue()), logger(tmp_path), PATH)
+    assert len(svc.sheet_view("BUYUK", 1, 50)["rows"]) == 50
+    assert len(svc.sheet_view("BUYUK", 1, 250)["rows"]) == 250
+    whole = svc.sheet_view("BUYUK", 1, 5000)
+    assert len(whole["rows"]) == 595 and whole["max_row"] == 595 and whole["max_col"] == 59
+    assert len(svc.sheet_view("BUYUK", 551, 100)["rows"]) == 45        # son sayfa

@@ -144,16 +144,19 @@ PAGE = r"""<!doctype html>
 header{display:flex;gap:12px;align-items:center;flex-wrap:wrap;padding:10px 16px;background:var(--card);border-bottom:1px solid var(--line)}
 header b{font-size:15px}.pill{padding:2px 8px;border-radius:99px;border:1px solid var(--line);color:var(--mut);font-size:12px}
 .prod{background:var(--bad);color:#fff;border-color:var(--bad)}
-main{display:grid;grid-template-columns:1fr 340px;gap:16px;padding:16px}
+main{display:grid;grid-template-columns:minmax(0,1fr) 340px;gap:16px;padding:16px}main>*{min-width:0}
 @media(max-width:900px){main{grid-template-columns:1fr}}
 .card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:12px}
 .bar{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px}
 input,select,button,textarea{font:inherit;padding:6px 10px;border-radius:8px;border:1px solid var(--line);background:var(--card);color:var(--fg)}
 button{cursor:pointer}button.p{background:var(--acc);color:#fff;border-color:var(--acc)}button.d{border-color:var(--bad);color:var(--bad)}
 button:disabled{opacity:.5;cursor:not-allowed}
-#wrap{overflow:auto;max-height:68vh;border:1px solid var(--line);border-radius:8px}
+#wrap{overflow:auto;height:calc(100vh - 230px);min-height:260px;border:1px solid var(--line);border-radius:8px}
+#wrap::-webkit-scrollbar{width:13px;height:13px}#wrap::-webkit-scrollbar-track{background:var(--bg)}
+#wrap::-webkit-scrollbar-thumb{background:var(--mut);border-radius:7px;border:3px solid var(--bg)}
+table{font-size:13px}
 table{border-collapse:collapse;width:max-content;min-width:100%}
-th,td{border:1px solid var(--line);padding:3px 8px;white-space:nowrap;max-width:260px;overflow:hidden;text-overflow:ellipsis;font-size:13px}
+th,td{border:1px solid var(--line);padding:3px 8px;white-space:nowrap;max-width:260px;overflow:hidden;text-overflow:ellipsis}
 th{background:var(--bg);position:sticky;top:0;color:var(--mut);font-weight:600}
 td.rn{background:var(--bg);color:var(--mut);position:sticky;left:0}
 td.c{cursor:pointer}td.c:hover{outline:2px solid var(--acc);outline-offset:-2px}td.sel{background:var(--warn)}
@@ -182,7 +185,7 @@ pre{white-space:pre-wrap;font-size:11px;color:var(--mut);max-height:180px;overfl
 <main id="mapView">
 <section class="card">
   <div class="bar"><select id="sheet"></select><input id="q" placeholder="Ara (en az 2 harf)…" size="22">
-   <button id="refresh">Yenile</button><select id="per" title="Sayfa başına satır"><option value="50">50 satır</option><option value="100">100 satır</option><option value="250">250 satır</option><option value="5000">Tümü</option></select><button id="prev">◀</button><button id="next">▶</button><span class="mut" id="range"></span></div>
+   <button id="refresh">Yenile</button><select id="per" title="Sayfa başına satır"><option value="50">50 satır</option><option value="100">100 satır</option><option value="250">250 satır</option><option value="5000">Tümü</option></select><button id="prev">◀</button><button id="next">▶</button><select id="zoom" title="Yakınlaştırma"><option value="13">Yakınlaştırma 100%</option><option value="11">85%</option><option value="9">70%</option><option value="7">55%</option></select><span class="mut" id="range"></span></div>
   <div id="results"></div>
   <div id="wrap"><table id="grid"></table></div>
 </section>
@@ -203,7 +206,7 @@ pre{white-space:pre-wrap;font-size:11px;color:var(--mut);max-height:180px;overfl
   <div id="msg" style="margin-top:10px"></div>
   <h4>Son kayıtlar</h4><pre id="log"></pre>
 </aside></main>
-<main id="regView" hidden style="grid-template-columns:1fr">
+<main id="regView" hidden style="grid-template-columns:minmax(0,1fr)">
 <section class="card">
   <h3 style="margin-top:0">1) Yer öner</h3>
   <div class="bar">
@@ -233,7 +236,7 @@ pre{white-space:pre-wrap;font-size:11px;color:var(--mut);max-height:180px;overfl
   <div id="rMsg" style="margin-top:10px"></div>
 </section>
 </main>
-<main id="vizView" hidden style="grid-template-columns:1fr">
+<main id="vizView" hidden style="grid-template-columns:minmax(0,1fr)">
 <section class="card">
   <div class="bar"><label>Tank <select id="vTank"></select></label><button id="vRefresh">Yenile</button>
    <input id="vq" placeholder="Hasta ara (soyad/ad) → haritada işaretle" size="30"><button id="vFind">Ara</button><span class="mut" id="vInfo"></span></div>
@@ -243,7 +246,7 @@ pre{white-space:pre-wrap;font-size:11px;color:var(--mut);max-height:180px;overfl
   <div id="vDetail" class="diff" hidden></div>
 </section>
 </main>
-<main id="remView" hidden style="grid-template-columns:1fr">
+<main id="remView" hidden style="grid-template-columns:minmax(0,1fr)">
 <section class="card">
   <h3 style="margin-top:0">Hasta çıkar (satırın hücrelerini temizler)</h3>
   <div class="bar"><input id="xq" placeholder="Soyad veya ad (en az 2 harf)" size="28"><button class="p" id="xSearch">Ara</button></div>
@@ -273,7 +276,7 @@ async function state(){S=await api("/api/state");$("file").textContent=S.file;
   $("bk").textContent=S.backup?"Yedek: "+S.backup:"Yedek: ilk onayda alınır";
   $("commit").hidden=!S.needs_commit||!S.staged;$("pend").textContent=S.staged?S.staged+" değişiklik yüklenmeyi bekliyor":"";
   const sh=$("sheet");if(!sh.options.length){S.sheets.forEach(n=>sh.add(new Option(n,n)));}}
-async function loadSheet(fresh){const v=await api(`/api/sheet?name=${encodeURIComponent($("sheet").value)}&row0=${row0}&rows=50${fresh?"&fresh=1":""}`);
+async function loadSheet(fresh){const v=await api(`/api/sheet?name=${encodeURIComponent($("sheet").value)}&row0=${row0}&rows=${$("per").value}${fresh?"&fresh=1":""}`);
   if(v.ok===false){msg(v.message,"bad");return;}view=v;row0=v.row0;
   const t=$("grid");t.textContent="";const h=t.insertRow();h.appendChild(document.createElement("th"));
   v.cols.forEach(c=>{const th=document.createElement("th");th.textContent=c;h.appendChild(th);});
@@ -301,7 +304,7 @@ let qt;$("q").oninput=()=>{clearTimeout(qt);qt=setTimeout(async()=>{const q=$("q
    d.onclick=async()=>{$("sheet").value=h.sheet;row0=Math.max(1,h.row-3);await loadSheet();box.textContent="";};box.appendChild(d);});
   if(!r.hits.length)box.textContent="Eşleşme yok.";},300);};
 $("sheet").onchange=()=>{row0=1;loadSheet();};$("refresh").onclick=()=>loadSheet(true);
-$("per").onchange=()=>{row0=1;loadSheet();};
+$("per").onchange=()=>{row0=1;loadSheet();};$("zoom").onchange=()=>{$("grid").style.fontSize=$("zoom").value+"px";};
 $("prev").onclick=()=>{row0=Math.max(1,row0-+$("per").value);loadSheet();};
 $("next").onclick=()=>{const per=+$("per").value;if(view&&row0+per<=view.max_row){row0+=per;loadSheet();}};
 async function logs(){const r=await api("/api/log");$("log").textContent=r.lines.map(l=>{try{const e=JSON.parse(l);
