@@ -61,8 +61,13 @@ class Position:
     rows: list[Row] = field(default_factory=list)
 
     @property
+    def kat(self) -> str:
+        """Etiketsiz (1, 2, ...) = alt kat; 'A' ekli (1A, 2A, ...) = üst kat."""
+        return "üst" if self.suffix else "alt"
+
+    @property
     def name(self) -> str:
-        return f"Tank {self.tank or '?'} / Canister {self.canister or '?'} / {self.label}"
+        return f"Tank {self.tank or '?'} / Canister {self.canister or '?'} / {self.label} ({self.kat} kat)"
 
     @property
     def free_rows(self) -> list[Row]:
@@ -162,8 +167,10 @@ def suggest(positions: list[Position], n: int, colored: bool = True, limit: int 
     for p in positions:
         groups[(p.sheet, p.tank, p.canister, p.suffix)].append(p)
     plans: list[tuple[tuple, Plan]] = []
-    for gi, (gkey, plist) in enumerate(sorted(groups.items(), key=lambda kv: (str(kv[0][0]), kv[0][1] or 0,
-                                                                                kv[0][2] or 0, kv[0][3]))):
+    # Önce tüm alt katlar (canister sırasıyla), sonra üst katlar: üst kata, alt kat dolunca geçilir.
+    order = sorted(groups.items(), key=lambda kv: (1 if kv[0][3] else 0, str(kv[0][0]), kv[0][1] or 0,
+                                                   kv[0][2] or 0, kv[0][3]))
+    for gi, (gkey, plist) in enumerate(order):
         plist.sort(key=lambda p: p.number)
         for i, start in enumerate(plist):
             remaining, placements, used_in_plan, prev = n, [], set(), None
@@ -206,7 +213,7 @@ def summarize(positions: list[Position]) -> list[str]:
         odd = sum(1 for p in ps if len(p.rows) != SLOTS)
         unknown = sum(p.unknown_occupied for p in ps)
         lines.append(f"[{sheet}] Tank {tank or '?'} / Canister {can or '?'} / "
-                     f"{'harfli (' + suf + ')' if suf else 'harfsiz'}: {len(ps)} konum "
+                     f"{'üst kat (' + suf + ')' if suf else 'alt kat (harfsiz)'}: {len(ps)} konum "
                      f"(tamamen boş {empty}, kısmen dolu {partial}, dolu {full}"
                      f"{', ' + str(odd) + ' konumda 4 dışı satır' if odd else ''}"
                      f"{', rengi okunamayan dolu satır ' + str(unknown) if unknown else ''})")

@@ -335,3 +335,14 @@ def test_suggest_colorless_uses_free_rows_only():
     ps = [p for p in scan_sheet("S", make_map_cells()) if p.canister == 1]
     plan = suggest(ps, 3, colored=False)[0]
     assert plan.placements[0].colors == [None, None, None]
+
+
+def test_lower_levels_suggested_before_upper_levels():
+    from tank_haritasi.harita import Position, Row
+    def pos(suffix, can):
+        label = f"1{suffix}"
+        return Position("S", 1, can, label, 1, suffix,
+                        [Row(i, {}, False, None, "") for i in range(1, 5)])
+    ps = [pos("A", 1), pos("", 2)]            # canister 1'in ÜST katı, canister 2'nin ALT katı
+    first = suggest(ps, 2)[0].placements[0].position
+    assert first.kat == "alt" and first.canister == 2

@@ -233,7 +233,7 @@ def cmd_yerler(args, cfg, client, tp):
         print("\n".join(["", *summarize(positions)]))
         if args.straw:
             pool = [p for p in positions if (args.tank is None or p.tank == args.tank)
-                    and (args.kat == "hepsi" or (args.kat == "harfli") == bool(p.suffix))]
+                    and (args.kat == "hepsi" or (args.kat == "ust") == bool(p.suffix))]
             plans = suggest(pool, args.straw, colored=not args.renksiz, limit=args.limit)
             print(f"\n{args.straw} straw için öneriler (Tank {args.tank or 'hepsi'}, kat: {args.kat}):")
             print("\n".join(f"  {i}. {describe_plan(p)}" for i, p in enumerate(plans, 1)) or "  uygun yer bulunamadı")
@@ -257,7 +257,8 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("profile", help="Hasta verisini göstermeden dosya yapısını özetle").set_defaults(fn=cmd_profile)
     s = sub.add_parser("yerler", help="Konum/boş yer özeti ve yer önerisi (kişi adı göstermez)")
     s.add_argument("--tank", type=int); s.add_argument("--straw", type=int, help="önerilecek straw sayısı")
-    s.add_argument("--kat", choices=["harfli", "harfsiz", "hepsi"], default="hepsi")
+    s.add_argument("--kat", choices=["alt", "ust", "hepsi"], default="hepsi",
+                   help="alt = etiketsiz konumlar (1, 2...), ust = 'A' ekli (1A, 2A...)")
     s.add_argument("--renksiz", action="store_true", help="renk kuralı uygulanmasın (rapidi)")
     s.add_argument("--limit", type=int, default=5); s.set_defaults(fn=cmd_yerler)
     sub.add_parser("sheets", help="Sayfaları listele").set_defaults(fn=cmd_sheets)
