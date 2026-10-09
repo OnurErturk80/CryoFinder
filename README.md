@@ -17,7 +17,7 @@ OneDrive'daki (kişisel Microsoft hesabı) `.xlsx` tank haritasını, **diske ka
 
 ## Kullanım (varsayılan hedef: TANK_HARITASI_TEST.xlsx)
 ```
-python -m tank_haritasi login
+python -m tank_haritasi login                # tarayıcı olmayan ortamda: --device-code
 python -m tank_haritasi probe                 # Excel API çalışıyor mu? (salt-okunur)
 python -m tank_haritasi probe --write-probe   # + yedekli, onaylı, içeriği değiştirmeyen yazma testi
 python -m tank_haritasi sheets

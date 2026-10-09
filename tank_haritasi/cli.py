@@ -186,6 +186,8 @@ def cmd_set(args, cfg, client, tp):
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="tank_haritasi", description="OneDrive tank haritası düzenleyici (silme yok).")
     p.add_argument("--production", action="store_true", help="TEST yerine gerçek dosyayı kullan")
+    p.add_argument("--device-code", action="store_true",
+                   help="Tarayıcı açılamayan ortamlarda (bulut/SSH) cihaz kodu ile giriş")
     p.add_argument("--mode", choices=["auto", "excel-api", "memory"], default="auto")
     sub = p.add_subparsers(dest="cmd", required=True)
     sub.add_parser("login", help="Tarayıcıda giriş yap").set_defaults(fn=cmd_login)
@@ -207,7 +209,7 @@ def main(argv=None) -> int:
     args = build_parser().parse_args(argv)
     try:
         cfg = load_config()
-        tp = TokenProvider(cfg)
+        tp = TokenProvider(cfg, device_code=args.device_code)
         client = GraphClient(tp.token)
         args.fn(args, cfg, client, tp)
     except (ConfigError, AuthError, GraphError, BackupError, ConflictError, KeyError, ValueError) as e:

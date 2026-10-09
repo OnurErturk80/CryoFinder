@@ -17,7 +17,8 @@ class AuthError(RuntimeError):
 
 
 class TokenProvider:
-    def __init__(self, cfg: Config):
+    def __init__(self, cfg: Config, device_code: bool = False):
+        self._device_code = device_code
         self._path = cfg.token_cache_path
         self._cache = msal.SerializableTokenCache()
         if self._path.exists():
@@ -38,7 +39,14 @@ class TokenProvider:
         accounts = self._app.get_accounts()
         if accounts:
             result = self._app.acquire_token_silent(SCOPES, account=accounts[0])
-        if not result:
+        if not result and self._device_code:
+            # Tarayıcısı olmayan ortamlar (bulut oturumu/SSH): kodu kendi tarayıcınızda girersiniz.
+            flow = self._app.initiate_device_flow(scopes=SCOPES)
+            if "user_code" not in flow:
+                raise AuthError(flow.get("error_description") or str(flow))
+            print(flow["message"], flush=True)
+            result = self._app.acquire_token_by_device_flow(flow)
+        elif not result:
             result = self._app.acquire_token_interactive(SCOPES, prompt="select_account")
         self._save()
         if "access_token" not in result:
