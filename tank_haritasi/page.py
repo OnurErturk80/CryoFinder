@@ -76,7 +76,11 @@ td.rn{background:var(--surface2);color:var(--mut);position:sticky;left:0;text-al
 .can{flex:none;width:236px;scroll-snap-align:start;border:1px solid var(--line);border-radius:14px;background:var(--surface2);padding:8px 8px 4px}
 .can h4{margin:2px 0 4px;text-align:center;font-size:14px}.lh{display:flex;gap:8px;padding:0 6px 4px 34px;color:var(--mut);font-size:11px;font-weight:600}.lh span{width:84px;text-align:center}
 .gob{display:flex;align-items:center;gap:8px;padding:3px 6px;border-top:1px dashed var(--line)}.gn{width:22px;text-align:right;color:var(--mut);font-size:12px}
-.lv{display:flex;gap:4px;width:84px;justify-content:center}.lv .none{color:var(--mut)}
+.lv{display:flex;gap:4px;width:84px;justify-content:center;flex-wrap:wrap}.lv .none{color:var(--mut)}
+.gob.odd .gn{color:var(--warn);font-weight:700}.gob.odd .lv{background:var(--warn-soft);border-radius:8px;padding:1px 3px}
+.loose{border-top:1px solid var(--line);margin-top:6px;padding:6px 4px 2px}.loose h5{margin:0 0 4px;font-size:12px;color:var(--mut)}
+.loose .grp{display:flex;align-items:center;gap:6px;margin:3px 0}.loose .grp .gn{width:auto;min-width:22px}.loose .grp .lvl{display:flex;gap:4px;flex-wrap:wrap}
+.can .cnote{padding:8px;color:var(--mut);font-size:13px}
 .dot{width:17px;height:17px;border-radius:50%;border:1.5px solid var(--mut);font-size:9px;line-height:14px;text-align:center;cursor:pointer;color:#111;font-weight:700;flex:none;display:inline-block;padding:0;min-height:0;background:transparent}
 .dot.empty{border-style:dashed;opacity:.7}.dot.cm{background:#3b82f6;border-color:#1d4ed8;color:#fff}.dot.cs{background:#facc15;border-color:#a16207}
 .dot.cy{background:#22c55e;border-color:#15803d}.dot.ct{background:#f97316;border-color:#c2410c}.dot.rapidi{background:#e5e7eb;border-color:#6b7280}.dot.other{background:#6b7280;border-color:#374151;color:#fff}
@@ -277,16 +281,21 @@ function dotEl(s){const d=h("button",{class:"dot "+(s.state==="color"?CCLS[s.col
 function legend(){const L=$("vLegend");L.textContent="";[["empty","Boş"],["cm","Mavi"],["cs","Sarı"],["cy","Yeşil"],["ct","Turuncu"],["rapidi","Rapidi (renksiz)"],["other","Dolu, renk okunamadı"]]
   .forEach(([c,t])=>L.append(h("span",{},h("span",{class:"dot "+c}),t)));}
 async function vizInit(){legend();const o=await api("/api/reg/options");const t=$("vTank");const keep=t.value;t.textContent="";
-  o.tanks.forEach(n=>t.add(new Option("Tank "+n,n)));if(keep)t.value=keep;await loadViz();}
+  (o.all_tanks||o.tanks).forEach(n=>t.add(new Option("Tank "+n,n)));if(keep)t.value=keep;await loadViz();}
 function tile(label,val,cls){return h("div",{class:"tile"},h("b",{},val),h("span",{},cls?h("span",{class:"dot "+cls,style:"cursor:default"}):null,label));}
 async function loadViz(){$("vDetail").hidden=true;const m=await api("/api/map?tank="+$("vTank").value);const box=$("vizCans");box.textContent="";const T=$("vTiles");T.textContent="";
   if(!m.ok){box.append(h("div",{class:"mut"},m.message));return;}const st=m.stats;
   T.append(tile("Toplam straw yeri",st.slots),tile("Boş",st.free,"empty"),tile("Mavi",st["MAVİ"],"cm"),tile("Sarı",st["SARI"],"cs"),tile("Yeşil",st["YEŞİL"],"cy"),tile("Turuncu",st["TURUNCU"],"ct"),tile("Rapidi",st.rapidi,"rapidi"));
-  if(st.other)T.append(tile("Renk okunamadı",st.other,"other"));if(m.nonstandard)T.append(tile("Haritada olmayan konum",m.nonstandard));
+  if(st.other)T.append(tile("Renk okunamadı",st.other,"other"));if(st.odd)T.append(tile("Standart dışı kayıt",st.odd));
   m.canisters.forEach(c=>{const cd=h("div",{class:"can"},h("h4",{},"Canister "+c.canister),h("div",{class:"lh"},h("span",{},m.has_ust?"üst":""),h("span",{},"alt")));
-    c.goblets.forEach(g=>{const row=h("div",{class:"gob"},h("span",{class:"gn"},g.n));
+    const odd=g=>[g.alt,g.ust].some(x=>x&&x.odd);
+    if(c.note)cd.append(h("div",{class:"cnote"},c.note));
+    c.goblets.forEach(g=>{const row=h("div",{class:"gob"+(odd(g)?" odd":""),title:odd(g)?"Standart dışı goblet (satır sayısı 4 değil)":""},h("span",{class:"gn"},g.n));
       [["ust",m.has_ust],["alt",true]].forEach(([k,on])=>{if(!on)return;const lv=h("span",{class:"lv"});
-        if(g[k])g[k].slots.forEach(s=>lv.append(dotEl(s)));else lv.append(h("span",{class:"none"},"—"));row.append(lv);});cd.append(row);});box.append(cd);});}
+        if(g[k])g[k].slots.forEach(s=>lv.append(dotEl(s)));else lv.append(h("span",{class:"none"},"—"));row.append(lv);});cd.append(row);});
+    if(c.loose.length){const lb=h("div",{class:"loose"},h("h5",{},"Etiketsiz / farklı düzendeki kayıtlar ("+c.loose.reduce((a,g)=>a+g.slots.length,0)+")"));
+      c.loose.forEach(g=>{const lvl=h("span",{class:"lvl"});g.slots.forEach(s=>lvl.append(dotEl(s)));lb.append(h("div",{class:"grp",title:"NO: "+g.label+" · "+g.kat+" kat"},h("span",{class:"gn"},g.label.length>8?g.label.slice(0,8)+"…":g.label),lvl));});cd.append(lb);}
+    box.append(cd);});}
 async function slotClick(id,el){document.querySelectorAll(".dot.sel").forEach(x=>x.classList.remove("sel"));el.classList.add("sel");
   const r=await api("/api/map/slot",{id});const d=$("vDetail");d.textContent="";d.hidden=false;
   if(!r.ok){d.append(h("div",{},r.message));return;}d.append(h("div",{class:"mut"},r.where));

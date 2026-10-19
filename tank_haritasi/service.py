@@ -11,7 +11,7 @@ from openpyxl.utils.cell import get_column_letter
 
 from .backup import BackupError
 from .editor import Change, apply_change, evaluate, log_evaluation
-from .harita import COLORS, STRAW_TYPES, Position, fold, scan_sheet, suggest, tr_upper, vial_kind, vial_text
+from .harita import COLORS, SLOTS, STRAW_TYPES, Position, fold, scan_sheet, scan_sheet_full, suggest, tr_upper, vial_kind, vial_text
 from .sheetutil import CELL_RE
 
 CACHE_TTL = 20.0
@@ -173,9 +173,11 @@ class EditService:
 
     def reg_options(self) -> dict:
         with self.lock:
-            pos = [p for p in self._scan_all() if p.standard and p.tank]
+            allp, marks = self._scan_all_full()
+            pos = [p for p in allp if p.standard and p.tank]
             tanks = sorted({p.tank for p in pos})
-            return {"tanks": tanks, "types": STRAW_TYPES, "colors": COLORS,
+            every = sorted({p.tank for p in allp if p.tank} | {t for (t, _) in marks})   # harita: konumu/işareti olan her tank
+            return {"tanks": tanks, "all_tanks": every, "types": STRAW_TYPES, "colors": COLORS,
                     "free_rows": {str(t): sum(len(p.free_rows) for p in pos if p.tank == t) for t in tanks}}
 
     @staticmethod
@@ -411,33 +413,63 @@ class EditService:
         return {"id": f"{r.row}:{r.cells['no'][1]}:{p.sheet}", "row": r.row, "state": state, "color": r.color,
                 "vial": r.vial}
 
+    def _scan_all_full(self):
+        out, marks = [], set()
+        for name in self.backend.sheet_names():
+            pos, mk = scan_sheet_full(name, self._cells(name, fresh=True))
+            out += pos
+            marks |= mk
+        return out, marks
+
     def map_view(self, tank: int) -> dict:
         with self.lock:
-            allp = [p for p in self._scan_all() if p.tank == tank]
-            pos = [p for p in allp if p.standard]
-            if not pos:
-                return {"ok": False, "message": "Bu tank için standart konum bulunamadı."}
-            cans: dict[int, dict[int, dict]] = {}
-            for p in sorted(pos, key=lambda p: (p.canister or 0, p.number)):
-                g = cans.setdefault(p.canister or 0, {}).setdefault(p.number, {"n": p.number, "alt": None, "ust": None})
+            allp, marks = self._scan_all_full()
+            allp = [p for p in allp if p.tank == tank]
+            cans_with_marker = {c for (t, c) in marks if t == tank}
+            if not allp and not cans_with_marker:
+                return {"ok": False, "message": "Bu tank için konum bulunamadı."}
+            cans: dict[int, dict] = {}
+
+            def can_entry(c):
+                return cans.setdefault(c or 0, {"canister": c or 0, "goblets": {}, "loose": [], "note": ""})
+
+            for c in cans_with_marker:
+                can_entry(c)
+            for p in sorted(allp, key=lambda p: (p.canister or 0, p.number, p.rows[0].row)):
+                ce = can_entry(p.canister)
+                slots = [self._slot(p, r) for r in p.rows]
+                if p.loose:
+                    ce["loose"].append({"label": p.label, "kat": p.kat, "slots": slots})
+                    continue
+                g = ce["goblets"].setdefault(p.number, {"n": p.number, "alt": None, "ust": None})
                 key = "ust" if p.kat == "üst" else "alt"
                 if g[key] is None:
-                    g[key] = {"label": p.label, "slots": [self._slot(p, r) for r in p.rows]}
-            stats = {"slots": 0, "free": 0, "rapidi": 0, "other": 0, **{c: 0 for c in COLORS}}
-            for p in pos:
+                    g[key] = {"label": p.label, "slots": slots, "odd": False}
+                else:                                    # aynı etiketin ek satırları (ör. 5. straw satırı) aynı goblette gösterilir
+                    g[key]["slots"] += slots
+                g[key]["odd"] = len(g[key]["slots"]) != SLOTS
+            stats = {"slots": 0, "free": 0, "rapidi": 0, "other": 0, "odd": 0, **{c: 0 for c in COLORS}}
+            for p in allp:
                 for r in p.rows:
-                    stats["slots"] += 1
                     st = self._slot(p, r)
+                    stats["slots"] += 1
+                    if p.loose or not p.standard:
+                        stats["odd"] += 1
                     if st["state"] == "empty":
                         stats["free"] += 1
                     elif st["state"] == "color":
                         stats[st["color"]] += 1
                     else:
                         stats[st["state"]] += 1
-            return {"ok": True, "tank": tank, "has_ust": any(p.kat == "üst" for p in pos), "stats": stats,
-                    "nonstandard": len(allp) - len(pos),
-                    "canisters": [{"canister": c, "goblets": [g for _, g in sorted(gs.items())]}
-                                  for c, gs in sorted(cans.items())]}
+            out = []
+            for c, ce in sorted(cans.items()):
+                gs = [g for _, g in sorted(ce["goblets"].items())]
+                note = ""
+                if not gs and not ce["loose"]:
+                    note = "Bu canister için haritada kayıt bulunamadı (boş olabilir ya da düzeni farklı olabilir)."
+                out.append({"canister": c, "goblets": gs, "loose": ce["loose"], "note": note})
+            return {"ok": True, "tank": tank, "has_ust": any(p.kat == "üst" for p in allp), "stats": stats,
+                    "canisters": out}
 
     def _row_by_id(self, slot_id: str):
         try:

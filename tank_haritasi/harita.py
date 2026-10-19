@@ -77,6 +77,7 @@ class Position:
     number: int
     suffix: str
     rows: list[Row] = field(default_factory=list)
+    loose: bool = False   # standart goblet etiketi (1, 1A…) olmayan, ama dolu satırlar
 
     @property
     def kat(self) -> str:
@@ -87,7 +88,7 @@ class Position:
     @property
     def standard(self) -> bool:
         """Standart konum: tam 4 satır. Daha kısa/uzun gruplar (not, ek kayıt, bozuk blok) öneride kullanılmaz."""
-        return len(self.rows) == SLOTS
+        return len(self.rows) == SLOTS and not self.loose
 
     @property
     def name(self) -> str:
@@ -114,8 +115,27 @@ class Position:
 FIELDS = ["no", "soyad", "ad", "esi", "tarih", "hucre", "vial"]
 
 
+HEADER_WORDS = {"SOYAD", "SOYADI", "HARF"}
+
+
+def _make_row(text: dict, r: int, cols: dict) -> Row:
+    vial = text.get((r, cols["vial"]), "")
+    occupied = any(text.get((r, cols[f]), "") for f in ("soyad", "ad", "hucre", "vial"))
+    return Row(r, {f: (r, cols[f]) for f in FIELDS}, occupied, vial_color(vial), vial,
+               text.get((r, cols["tarih"]), ""), text.get((r, cols["soyad"]), ""),
+               text.get((r, cols["ad"]), ""), text.get((r, cols["esi"]), ""), text.get((r, cols["hucre"]), ""))
+
+
 def scan_sheet(sheet: str, cells: dict[tuple[int, int], object]) -> list[Position]:
-    """Bir sayfanın hücrelerinden (satır, sütun) → metin konumları çıkarır. Desteklenmeyen düzende boş döner."""
+    return scan_sheet_full(sheet, cells)[0]
+
+
+def scan_sheet_full(sheet: str, cells: dict[tuple[int, int], object]) -> tuple[list[Position], set[tuple[int, int]]]:
+    """Bir sayfanın hücrelerinden (satır, sütun) → konumlar ve (tank, canister) işaretleri.
+
+    Standart konumlar: NO sütunundaki 1, 1A… etiketli ardışık satırlar. Bunların dışında kalan DOLU satırlar
+    (etiketsiz/farklı düzen) `loose` konumlar olarak yine listelenir; böylece hiçbir hasta haritada ve aramada kaybolmaz.
+    Desteklenmeyen düzende boş döner."""
     text = {k: str(v).strip() for k, v in cells.items() if str(v).strip() != ""}
     counts = Counter(c for (r, c), v in text.items()
                      if (m := POS_RE.match(fold(v))) and 1 <= int(m[1]) <= 60)
@@ -147,11 +167,16 @@ def scan_sheet(sheet: str, cells: dict[tuple[int, int], object]) -> list[Positio
         return last
 
     out: list[Position] = []
+    markers: set[tuple[int, int]] = set()
     for bi, c0 in enumerate(blocks):
         cols = {name: c0 + i for i, name in enumerate(FIELDS)}
         block_cans = [m for m in cans if c0 <= m[1] <= c0 + 6]
+        for mr, _, mnum in block_cans:
+            t = current(tanks, mr)
+            if t and t[1] != 0:
+                markers.add((t[1], mnum))
         no_rows = sorted((r, fold(v)) for (r, c), v in text.items() if c == c0 and POS_RE.match(fold(v)))
-        prev = None
+        prev, block_start = None, len(out)
         for r, lab in no_rows:
             m = POS_RE.match(lab)
             tank = current(tanks, r)
@@ -159,19 +184,37 @@ def scan_sheet(sheet: str, cells: dict[tuple[int, int], object]) -> list[Positio
                 continue
             can = current(block_cans, r)
             key = (tank[1] if tank else None, can[2] if can else bi + 1, lab)
-            pos = out[-1] if out and prev else None
+            pos = out[-1] if len(out) > block_start and prev else None
             fresh = (pos is None or prev[0] + 1 != r or prev[1] != key or len(pos.rows) >= SLOTS or pos.sheet != sheet)
             if fresh:
                 pos = Position(sheet, key[0], key[1], lab, int(m[1]), m[2])
                 out.append(pos)
-            vial = text.get((r, cols["vial"]), "")
-            occupied = any(text.get((r, cols[f]), "") for f in ("soyad", "ad", "hucre", "vial"))
-            pos.rows.append(Row(r, {f: (r, cols[f]) for f in FIELDS}, occupied, vial_color(vial), vial,
-                                text.get((r, cols["tarih"]), ""), text.get((r, cols["soyad"]), ""),
-                                text.get((r, cols["ad"]), ""), text.get((r, cols["esi"]), ""),
-                                text.get((r, cols["hucre"]), "")))
+            pos.rows.append(_make_row(text, r, cols))
             prev = (r, key)
-    return out
+        # --- standart etiketi olmayan ama dolu satırlar (farklı düzen): tek tek gruplanır, kaybolmaz
+        covered = {row.row for p in out[block_start:] for row in p.rows}
+        data_rows = sorted({r for (r, c) in text if c in (c0 + 1, c0 + 2, c0 + 5, c0 + 6)} - covered)
+        prev_loose = None
+        for r in data_rows:
+            tank = current(tanks, r)
+            if tank and tank[1] == 0:
+                continue
+            if fold(text.get((r, c0 + 1), "")) in HEADER_WORDS or fold(text.get((r, c0 + 6), "")) == "VIAL" \
+                    or fold(text.get((r, c0 + 5), "")) == "HUCRE":
+                continue                                          # başlık satırı
+            row = _make_row(text, r, cols)
+            if not row.occupied:
+                continue
+            can = current(block_cans, r)
+            label = text.get((r, c0), "") or "—"
+            key = (tank[1] if tank else None, can[2] if can else bi + 1, label)
+            if prev_loose and prev_loose[0] + 1 == r and prev_loose[1] == key:
+                out[-1].rows.append(row)
+            else:
+                lead = re.match(r"\d+", label)
+                out.append(Position(sheet, key[0], key[1], label, int(lead[0]) if lead else 0, "", [row], loose=True))
+            prev_loose = (r, key)
+    return out, markers
 
 
 # ---------------- öneri
@@ -280,7 +323,8 @@ def describe_layout(sheet: str, cells: dict, positions: list[Position]) -> list[
     lines.append("İşaret hücreleri: " + (", ".join(marks) or "yok"))
     groups = defaultdict(list)
     for p in positions:
-        groups[(p.tank, p.canister, p.suffix, p.rows[0].cells["no"][1])].append(p)
+        if not p.loose:
+            groups[(p.tank, p.canister, p.suffix, p.rows[0].cells["no"][1])].append(p)
     for (tank, can, suf, col), ps in sorted(groups.items(), key=lambda kv: (kv[0][3], kv[1][0].rows[0].row)):
         rows = [r.row for p in ps for r in p.rows]
         nums = sorted({p.number for p in ps})
@@ -288,8 +332,18 @@ def describe_layout(sheet: str, cells: dict, positions: list[Position]) -> list[
         lines.append(f"  sütun {get_column_letter(col)}: Tank {tank or '?'} / Canister {can or '?'} / "
                      f"{'A etiketli' if suf else 'harfsiz'}: satır {min(rows)}–{max(rows)}, goblet {nums[0]}–{nums[-1]} "
                      f"({len(ps)} konum; satır sayıları {dict(sorted(sizes.items()))})")
+    loose = defaultdict(list)
+    for p in positions:
+        if p.loose:
+            loose[(p.tank, p.canister)].append(p)
+    from .profile import shape
+    for (tank, can), ps in sorted(loose.items(), key=lambda kv: (kv[0][0] or 0, kv[0][1] or 0)):
+        rr = [r.row for p in ps for r in p.rows]
+        shapes = Counter(shape(p.label) for p in ps).most_common(6)
+        lines.append(f"  etiketsiz dolu satırlar: Tank {tank or '?'} / Canister {can or '?'}: {len(rr)} satır "
+                     f"({min(rr)}–{max(rr)}); NO biçimleri: " + ", ".join(f"{k}×{n}" for k, n in shapes))
     odd = [f"{get_column_letter(p.rows[0].cells['no'][1])}{p.rows[0].row}:{p.label}({len(p.rows)} satır)"
-           for p in positions if not p.standard]
+           for p in positions if not p.standard and not p.loose]
     lines.append("Standart dışı konumlar: " + (", ".join(odd[:60]) + (" …" if len(odd) > 60 else "") if odd else "yok"))
     from .profile import shape
     shapes = Counter(shape(r.vial) if r.vial else "(boş)" for p in positions if p.standard

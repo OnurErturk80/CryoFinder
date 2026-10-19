@@ -709,3 +709,74 @@ def test_client_id_tolerates_pasted_brackets_and_quotes(monkeypatch, tmp_path):
     monkeypatch.setenv("AZURE_CLIENT_ID", "00000000-bozuk")
     with pytest.raises(ConfigError):
         load_config(empty)
+
+
+# ---- standart olmayan düzenler (etiketsiz satırlar, tek satırlık gobletler, boş canister) görünür kalmalı
+def make_odd_cells():
+    cells = make_map_cells()
+    cells[(50, 1)], cells[(52, 1)], cells[(52, 9)] = "TANK 2", "CANISTER 1", "CANISTER 2"
+    for k, r in enumerate((54, 55, 56)):             # Tank 2 / canister 1: NO etiketi olmayan dolu satırlar
+        cells[(r, 2)], cells[(r, 3)] = "ETIKETSIZ" + "ABC"[k], "Ad"
+        cells[(r, 6)], cells[(r, 7)] = "D5", "1 CRYOTOPMAVİ"
+    for n, r in enumerate((54, 55, 56), 1):          # Tank 2 / canister 2: goblet başına TEK satır
+        cells[(r, 9)], cells[(r, 10)], cells[(r, 11)] = str(n), "TEKSOYAD" + "ABC"[n - 1], "Ad"
+        cells[(r, 14)], cells[(r, 15)] = "D5", "1 RAPIDI 1"
+    cells[(70, 1)], cells[(72, 1)], cells[(72, 9)] = "TANK 3", "CANISTER 1", "CANISTER 2"   # içi boş canister'lar
+    return cells
+
+
+def make_odd_service(tmp_path):
+    from openpyxl import Workbook
+    wb = Workbook(); ws = wb.active; ws.title = "TANK 1+2+3"
+    for (r, c), v in make_odd_cells().items():
+        ws.cell(r, c, v)
+    b = io.BytesIO(); wb.save(b)
+    fake = FakeOneDrive({PATH: b.getvalue()}, excel_api=True)
+    cl = GraphClient(lambda: "tok", session=fake, sleep=lambda s: None)
+    bk = Backuper(cl, "Yedekler", PATH, lambda: onedrive.download(cl, "ID1"))
+    return fake, EditService(ExcelApiBackend(cl, "ID1"), bk, logger(tmp_path), PATH)
+
+
+def test_scan_keeps_unlabelled_and_single_row_records():
+    from tank_haritasi.harita import scan_sheet_full
+    ps, marks = scan_sheet_full("S", make_odd_cells())
+    loose = [p for p in ps if p.loose]
+    assert len(loose) == 1 and (loose[0].tank, loose[0].canister) == (2, 1) and len(loose[0].rows) == 3
+    assert not loose[0].standard and loose[0].rows[0].color == "MAVİ"
+    singles = [p for p in ps if (p.tank, p.canister) == (2, 2)]
+    assert len(singles) == 3 and all(len(p.rows) == 1 and not p.standard for p in singles)
+    assert {(1, 1), (1, 2), (2, 1), (2, 2), (3, 1), (3, 2)} <= marks
+    assert all(p.standard for p in ps if p.tank == 1)                    # tank 1 etkilenmedi
+
+
+def test_map_view_shows_every_canister_with_patients(tmp_path):
+    fake, svc = make_odd_service(tmp_path)
+    m = svc.map_view(2)
+    c = {x["canister"]: x for x in m["canisters"]}
+    assert set(c) == {1, 2}
+    assert c[1]["goblets"] == [] and len(c[1]["loose"]) == 1 and len(c[1]["loose"][0]["slots"]) == 3
+    assert [g["n"] for g in c[2]["goblets"]] == [1, 2, 3] and all(g["alt"]["odd"] for g in c[2]["goblets"])
+    assert m["stats"]["odd"] == 6 and m["stats"]["MAVİ"] == 3
+    m3 = svc.map_view(3)
+    assert {x["canister"] for x in m3["canisters"]} == {1, 2} and all(x["note"] for x in m3["canisters"])
+    assert svc.map_view(1)["ok"] and svc.reg_options()["tanks"] == [1]            # öneri yalnızca standart konumları kullanır
+    blob = json.dumps(m, ensure_ascii=False)
+    assert "ETIKETSIZ" not in blob and "TEKSOYAD" not in blob                      # adlar harita verisinde yok
+
+
+def test_unlabelled_patients_are_searchable_and_removable(tmp_path):
+    fake, svc = make_odd_service(tmp_path)
+    hits = svc.rem_search("etiketsizb")["hits"]
+    assert len(hits) == 1 and hits[0]["tank"] == 2 and hits[0]["canister"] == 1
+    prev = svc.rem_preview([{"sheet": hits[0]["sheet"], "row": hits[0]["row"], "col": hits[0]["col"]}])
+    assert prev["ok"] and svc.rem_apply(prev["id"])["ok"]
+    assert svc.rem_search("etiketsizb")["hits"] == [] and len(svc.rem_search("etiketsiza")["hits"]) == 1
+    slot = svc.map_view(2)["canisters"][0]["loose"][0]["slots"][0]
+    assert svc.map_slot(slot["id"])["ok"]
+
+
+def test_map_tank_list_includes_tanks_without_standard_positions(tmp_path):
+    fake, svc = make_odd_service(tmp_path)
+    o = svc.reg_options()
+    assert o["tanks"] == [1]                       # yer önerisi yalnızca standart konumu olan tanklar
+    assert o["all_tanks"] == [1, 2, 3]             # harita: konumu veya canister işareti olan her tank

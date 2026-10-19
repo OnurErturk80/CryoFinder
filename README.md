@@ -68,8 +68,8 @@ Harita sekmesinde "Tümü" seçeneğiyle sayfanın tamamı tek seferde listeleni
 Seçilen tank için her canister bir sütun; her goblet bir satır; üst ve alt kat 4'er nokta: boş = kesik çizgili daire,
 mavi/sarı/yeşil/turuncu = renkli straw (içinde harf: M, S, Y, T), R = rapidi (renksiz), ? = dolu ama renk okunamadı.
 Üstte tankın boş/dolu özeti. Hasta adlarını haritanın verisi içermez: bir noktaya tıklayınca ya da hasta ararken (soyad/ad)
-o hastanın straw'ları kırmızı halkayla işaretlenir. Standart olmayan (4 satırlık olmayan) konumlar haritada gösterilmez,
-sayısı özet satırında yazılır.
+o hastanın straw'ları kırmızı halkayla işaretlenir. Standart olmayan kayıtlar (tek satırlık gobletler, ek straw satırları, NO etiketi olmayan dolu satırlar) da haritada
+gösterilir (sarı zeminli goblet / "Etiketsiz kayıtlar" bloğu), aranabilir ve çıkarılabilir; yer önerisinde ise kullanılmaz.
 
 ## Bellek-içi yöntemin sınırları
 Yükleme öncesi doğrulanır: yalnızca onaylı hücreler değişti mi; grafik/resim/pivot gibi parçalar kaybolacak mı
