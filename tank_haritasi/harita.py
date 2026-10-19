@@ -22,6 +22,16 @@ SLOTS = 4
 COLORS = ["MAVİ", "SARI", "YEŞİL", "TURUNCU"]          # öneri sırası ve yazım
 _COLOR_FOLDED = {c.translate(_TR).upper(): c for c in COLORS}
 STRAW_TYPES = ["VİTRİFİT", "CRYOLOCK", "CRYOTOP"]
+# Atama kuralı (mevcut kullanılan araçtaki gibi): straw rengi gobletteki SIRAYA göre belirlenir;
+# o renk kullanılmışsa sıradaki kullanılmamış renk seçilir.
+COLOR_ORDER = ["MAVİ", "SARI", "TURUNCU", "YEŞİL"]
+POS_COLOR = {1: "MAVİ", 2: "SARI", 3: "TURUNCU", 4: "YEŞİL"}
+DEVICES = ["CRYOLOCK", "VİTRİFİT", "CRYOTOP", "RAPIDI"]
+TANK_LABELS = {4: "Tank 4", 101: "Yeni sperm", 102: "Sayfa1 (eski sperm)", 103: "Küçük tank (Tank 3)"}
+
+
+def tank_label(t) -> str:
+    return TANK_LABELS.get(t) or f"Tank {t if t else '?'}"
 
 
 def fold(v) -> str:
@@ -33,9 +43,27 @@ def tr_upper(s: str) -> str:
     return s.strip().replace("i", "İ").replace("ı", "I").upper()
 
 
-def vial_text(straw_type: str, color: str) -> str:
-    """Kullanıcının yazdığı biçim: '1 CRYOLOCKSARI', '1 VİTRİFİTMAVİ'."""
-    return f"1 {straw_type}{color}"
+def vial_text(device: str, color: str | None, pos: int | None = None) -> str:
+    """VİAL biçimi: '1 CRYOLOCKSARI 2', '1 VİTRİFİTMAVİ 1', rapidi için '1 RAPIDI 3' (sondaki sayı goblet içindeki sıra)."""
+    tail = f" {pos}" if pos else ""
+    if device == "RAPIDI":
+        return f"1 RAPIDI{tail}"
+    return f"1 {device}{color or ''}{tail}"
+
+
+_DATE_FORMATS = ("%d.%m.%Y", "%Y-%m-%d", "%d/%m/%Y", "%d.%m.%y", "%d-%m-%Y")
+
+
+def parse_date(text):
+    """Hücrenin görünen tarih metni → date (tanınmazsa None)."""
+    from datetime import datetime
+    t = str(text or "").strip().split(" ")[0]
+    for f in _DATE_FORMATS:
+        try:
+            return datetime.strptime(t, f).date()
+        except ValueError:
+            continue
+    return None
 
 
 def vial_kind(text) -> str | None:
@@ -78,21 +106,59 @@ class Position:
     suffix: str
     rows: list[Row] = field(default_factory=list)
     loose: bool = False   # standart goblet etiketi (1, 1A…) olmayan, ama dolu satırlar
+    kind: str = "goblet"  # goblet (4 straw) | pos (harf+rakam konumları) | list (harf satırları: sperm)
+    max_fill: int = SLOTS
+    part: str = ""        # Tank 4 gibi düzenlerde etiketten gelen "Üst"/"Alt"
+    special: bool = False # standart tank/canister düzeninden farklı ama tanınan düzen (Tank 4, sperm sayfaları)
+    order: int = 0
 
     @property
     def kat(self) -> str:
-        """Kat sayfadan belli olur: adında 'ÜST' geçen sayfa üst kat, diğerleri alt kat.
+        """Kat: etiketten (Ü/A) belliyse oradan, değilse sayfa adından: adında 'ÜST' geçen sayfa üst kat.
         'A' eki yalnızca o gobletin üst katının kullanıldığını gösteren bir işarettir."""
+        if self.part:
+            return "üst" if self.part == "Üst" else "alt"
         return "üst" if "UST" in fold(self.sheet) else "alt"
 
     @property
     def standard(self) -> bool:
-        """Standart konum: tam 4 satır. Daha kısa/uzun gruplar (not, ek kayıt, bozuk blok) öneride kullanılmaz."""
-        return len(self.rows) == SLOTS and not self.loose
+        """Standart konum: tam 4 satır (ya da tanınan özel düzen). Daha kısa/uzun gruplar öneride kullanılmaz."""
+        return self.special or (len(self.rows) == SLOTS and not self.loose)
 
     @property
     def name(self) -> str:
-        return f"Tank {self.tank or '?'} / Canister {self.canister or '?'} / {self.label} ({self.kat} kat)"
+        return f"{tank_label(self.tank)} / Canister {self.canister or '?'} / {self.label} ({self.kat} kat)"
+
+    @property
+    def pid(self) -> str:
+        return f"{self.sheet}|{self.rows[0].cells['no'][1]}|{self.rows[0].row}|{self.label}"
+
+    @property
+    def occupied_count(self) -> int:
+        return sum(1 for r in self.rows if r.occupied)
+
+    @property
+    def capacity(self) -> int:
+        return max(0, min(len(self.free_rows), self.max_fill - self.occupied_count))
+
+    @property
+    def group_type(self) -> str:
+        """empty | rapid | color — bir gobletin içinde rapidi ile renkli straw karışmaz."""
+        t = "empty"
+        for r in self.rows:
+            if r.occupied:
+                if vial_kind(r.vial) == "RAPIDI":
+                    return "rapid"
+                t = "color"
+        return t
+
+    @property
+    def goblet_key(self) -> tuple:
+        return (self.tank, self.canister, self.number)
+
+    @property
+    def canister_key(self) -> tuple:
+        return (self.sheet, self.tank, self.canister, self.kat)
 
     @property
     def free_rows(self) -> list[Row]:
@@ -120,7 +186,7 @@ HEADER_WORDS = {"SOYAD", "SOYADI", "HARF"}
 
 def _make_row(text: dict, r: int, cols: dict) -> Row:
     vial = text.get((r, cols["vial"]), "")
-    occupied = any(text.get((r, cols[f]), "") for f in ("soyad", "ad", "hucre", "vial"))
+    occupied = any(text.get((r, cols[f]), "") for f in ("esi", "soyad", "ad", "tarih", "hucre", "vial"))
     return Row(r, {f: (r, cols[f]) for f in FIELDS}, occupied, vial_color(vial), vial,
                text.get((r, cols["tarih"]), ""), text.get((r, cols["soyad"]), ""),
                text.get((r, cols["ad"]), ""), text.get((r, cols["esi"]), ""), text.get((r, cols["hucre"]), ""))
@@ -215,6 +281,143 @@ def scan_sheet_full(sheet: str, cells: dict[tuple[int, int], object]) -> tuple[l
                 out.append(Position(sheet, key[0], key[1], label, int(lead[0]) if lead else 0, "", [row], loose=True))
             prev_loose = (r, key)
     return out, markers
+
+
+# ---------------- özel düzenler: Tank 4, sperm sayfaları, küçük tank
+_CAN_ANY = re.compile(r"CAN+ISTER\s*(\d+)")
+_EXTRA_LABEL = re.compile(r"^[A-Z]{1,2}( ?\d+)?$")
+EXTRA_SHEETS = {"TANK 4": 4, "YENI SPERM": 101, "SAYFA1": 102}
+
+
+def extra_tank_for(sheet: str) -> tuple[int, str]:
+    f = fold(sheet)
+    if f in EXTRA_SHEETS:
+        t = EXTRA_SHEETS[f]
+        return t, tank_label(t)
+    return 200 + (sum(ord(ch) for ch in f) % 700), sheet    # tanınmayan sayfa: sayfa adıyla göster (kararlı kimlik)
+
+
+def scan_extra(sheet: str, cells: dict, tank_id: int, mode: str = "headers", col: int | None = None) -> list[Position]:
+    """NO/SOYAD başlıklı (headers) ya da 'CANİSTER n' başlıklı tek sütunlu (ktank) özel düzenleri okur.
+
+    Etiket biçimine göre tür belirlenir: harf+rakam (K3) → 'pos', harf+Ü/A (KÜ, KA) → 'goblet' (üst/alt kat),
+    tek harf → 'goblet' (çoğu satır ≥3 ise) ya da 'list' (sperm: her satır bir kayıt)."""
+    text = {k: str(v).strip() for k, v in cells.items() if str(v).strip() != ""}
+    if not text:
+        return []
+    max_row = max(r for r, _ in text)
+    blocks: list[dict] = []
+    if mode == "headers":
+        by_col: dict[int, list[int]] = defaultdict(list)
+        for (r, c), v in text.items():
+            if fold(v) == "NO" and fold(text.get((r, c + 1), "")) == "SOYAD":
+                by_col[c].append(r)
+        for c, rows in by_col.items():
+            rows.sort()
+            for i, h in enumerate(rows):
+                cn = None
+                left = text.get((h, c - 1)) if c > 1 else None
+                if left:
+                    m = re.match(r"^\d+(?:\.0+)?$", left) or re.search(r"\d+", left)
+                    if m:
+                        cn = int(float(m.group(0)))
+                for up in (1, 2, 3):
+                    if cn is not None:
+                        break
+                    mm = _CAN_ANY.search(fold(text.get((h - up, c), "")))
+                    if mm:
+                        cn = int(mm.group(1))
+                blocks.append({"col": c, "from": h + 1, "to": rows[i + 1] - 1 if i + 1 < len(rows) else max_row,
+                               "cn": cn, "stop": False})
+    else:
+        heads = sorted((r, int(m.group(1))) for (r, c), v in text.items()
+                       if c == col and (m := re.match(r"^CAN+ISTER\s*(\d+)", fold(v))))
+        for i, (r, cn) in enumerate(heads):
+            blocks.append({"col": col, "from": r + 1, "to": heads[i + 1][0] - 1 if i + 1 < len(heads) else max_row,
+                           "cn": cn, "stop": True})
+
+    out: list[Position] = []
+    used_cn: set[int] = set()
+    for seq, bl in enumerate(blocks, 1):
+        cn = bl["cn"] if bl["cn"] is not None else 900 + seq
+        while cn in used_cn:
+            cn += 100
+        items = []
+        for r in range(bl["from"], bl["to"] + 1):
+            raw = text.get((r, bl["col"]), "")
+            if not raw:
+                if bl["stop"] and items:
+                    break
+                continue
+            f = fold(raw)
+            if f in ("HARF", "NO") or not _EXTRA_LABEL.match(f):
+                continue
+            items.append((r, f))
+        if len(items) < 3:
+            continue
+        used_cn.add(cn)
+        labs = [lab for _, lab in items]
+
+        def runs_of(key_fn):
+            runs: list[dict] = []
+            for r, lab in items:
+                k = key_fn(lab)
+                if runs and runs[-1]["key"] == k:
+                    runs[-1]["rows"].append(r)
+                else:
+                    runs.append({"key": k, "lab": lab, "rows": [r]})
+            return runs
+
+        pos_share = sum(1 for l in labs if re.match(r"^[A-Z]\d$", l)) / len(labs)
+        if pos_share >= 0.85:
+            kind, runs = "pos", runs_of(lambda l: l[0])
+        elif all(re.match(r"^[A-Z][UA]$", l) for l in labs):
+            kind, runs = "goblet", runs_of(lambda l: l)
+        elif all(re.match(r"^[A-Z]$", l) for l in labs):
+            runs = runs_of(lambda l: l)
+            big = sum(1 for x in runs if len(x["rows"]) >= 3)
+            kind = "goblet" if big >= len(runs) / 2 else "list"
+        else:
+            kind, runs = "list", runs_of(lambda l: l)
+        is_ua = kind == "goblet" and all(re.match(r"^[A-Z][UA]$", l) for l in labs)
+        letters: dict[str, int] = {}
+        cols = {name: bl["col"] + i for i, name in enumerate(FIELDS)}
+        for gi, run in enumerate(runs):
+            letter, part, label = run["lab"][0], "", run["lab"]
+            if is_ua:
+                part, label = ("Üst" if run["lab"][1] == "U" else "Alt"), letter
+            elif kind == "pos":
+                label = letter
+            number = letters.setdefault(letter, len(letters) + 1) if is_ua else gi + 1
+            rows = [_make_row(text, r, cols) for r in run["rows"]]
+            out.append(Position(sheet, tank_id, cn, label, number, "", rows, kind=kind,
+                                max_fill=SLOTS if kind == "goblet" else len(rows), part=part, special=True, order=gi))
+    return out
+
+
+def find_small_tank_col(text: dict) -> int | None:
+    """Küçük tank bloğu: 'HARF' başlığının hemen yanında 'SOYAD' olan sütun."""
+    for (r, c), v in sorted(text.items()):
+        if fold(v) == "HARF" and fold(text.get((r, c + 1), "")) == "SOYAD":
+            return c
+    return None
+
+
+def scan_layout(sheet: str, cells: dict) -> tuple[list[Position], set[tuple[int, int]]]:
+    """Bir sayfanın tüm konumları: standart bloklar + (standart yoksa) NO/SOYAD başlıklı özel düzen + küçük tank."""
+    positions, marks = scan_sheet_full(sheet, cells)
+    if not any(not p.loose for p in positions):
+        tank_id, _ = extra_tank_for(sheet)
+        extra = scan_extra(sheet, cells, tank_id, "headers")
+        positions = extra or positions
+        marks = marks | {(p.tank, p.canister) for p in extra}
+    text = {k: str(v).strip() for k, v in cells.items() if str(v).strip() != ""}
+    col = find_small_tank_col(text)
+    if col:
+        small = scan_extra(sheet, cells, 103, "ktank", col)
+        positions = positions + small
+        marks = marks | {(103, p.canister) for p in small}
+    return positions, marks
 
 
 # ---------------- öneri

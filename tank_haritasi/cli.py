@@ -17,7 +17,8 @@ from .excel_api import ExcelApiBackend, probe
 from .graph import GraphClient, GraphError
 from .memory import MemoryBackend
 from .onedrive import ConflictError
-from .harita import describe_layout, describe_plan, scan_sheet, summarize, suggest
+from .harita import DEVICES, describe_layout, scan_layout, summarize, tank_label
+from .planner import plan_embryo
 from .profile import profile_workbook
 from .service import EditService
 from .webui import make_server
@@ -229,18 +230,25 @@ def cmd_yerler(args, cfg, client, tp):
         positions = []
         for name in be.sheet_names():
             cells = be.dump(name, text=True)
-            found = scan_sheet(name, cells)
+            found, _ = scan_layout(name, cells)
             if args.detay:
                 print("\n".join(describe_layout(name, cells, found)))
             print(f"[{name}] {'konum algılanamadı (desteklenmeyen düzen)' if not found else f'{len(found)} konum'}")
             positions += found
         print("\n".join(["", *summarize(positions)]))
         if args.straw:
-            pool = [p for p in positions if (args.tank is None or p.tank == args.tank)
-                    and (args.kat == "hepsi" or (args.kat == "ust") == bool(p.suffix))]
-            plans = suggest(pool, args.straw, colored=not args.renksiz, limit=args.limit)
-            print(f"\n{args.straw} straw için öneriler (Tank {args.tank or 'hepsi'}, kat: {args.kat}):")
-            print("\n".join(f"  {i}. {describe_plan(p)}" for i, p in enumerate(plans, 1)) or "  uygun yer bulunamadı")
+            pool = [p for p in positions if (args.tank is None or p.tank == args.tank) and p.standard and not p.loose
+                    and (args.kat == "hepsi" or p.kat == ("üst" if args.kat == "ust" else "alt"))]
+            patient = {"soyad": "ÖRNEK", "ad": "HASTA", "esi": "", "tarih": None}
+            plans = plan_embryo(positions, pool, patient, [{"device": args.tur, "hucre": ""}] * args.straw, args.limit)
+            print(f"\n{args.straw} {args.tur} straw için öneriler ({tank_label(args.tank) if args.tank else 'tüm tanklar'}, kat: {args.kat}):")
+            for i, plan in enumerate(plans, 1):
+                print(f"  {i}. puan {plan.score:.1f}" + (f" — UYARI: {'; '.join(plan.warnings)}" if plan.warnings else ""))
+                for pl in plan.placements:
+                    its = ", ".join(f"satır {it.row}: {it.vial}" for it in pl.items)
+                    print(f"      {pl.position.name}  →  {its}\n      gerekçe: {'. '.join(pl.why)}")
+            if not plans:
+                print("  uygun yer bulunamadı")
     finally:
         be.close()
 
@@ -263,7 +271,7 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--tank", type=int); s.add_argument("--straw", type=int, help="önerilecek straw sayısı")
     s.add_argument("--kat", choices=["alt", "ust", "hepsi"], default="hepsi",
                    help="alt = etiketsiz konumlar (1, 2...), ust = 'A' ekli (1A, 2A...)")
-    s.add_argument("--renksiz", action="store_true", help="renk kuralı uygulanmasın (rapidi)")
+    s.add_argument("--tur", choices=DEVICES, default="CRYOLOCK", help="straw türü")
     s.add_argument("--limit", type=int, default=5)
     s.add_argument("--detay", action="store_true", help="TANK/CANISTER işaretlerini ve satır/sütun aralıklarını göster")
     s.set_defaults(fn=cmd_yerler)

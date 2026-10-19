@@ -11,7 +11,9 @@ from openpyxl.utils.cell import get_column_letter
 
 from .backup import BackupError
 from .editor import Change, apply_change, evaluate, log_evaluation
-from .harita import COLORS, SLOTS, STRAW_TYPES, Position, fold, scan_sheet, scan_sheet_full, suggest, tr_upper, vial_kind, vial_text
+from .harita import (COLORS, DEVICES, SLOTS, Position, fold, parse_date, scan_layout, tank_label, tr_upper, vial_kind,
+                     vial_text)
+from .planner import plan_embryo, plan_sperm
 from .sheetutil import CELL_RE
 
 CACHE_TTL = 20.0
@@ -165,46 +167,119 @@ class EditService:
 
 
     # ---- yeni hasta kaydı: yer öner → önizle → tek onayla yaz
+    TANK_ORDER = [1, 2, 103, 4, 5, 101, 102]
+
     def _scan_all(self) -> list[Position]:
-        out: list[Position] = []
-        for name in self.backend.sheet_names():
-            out += scan_sheet(name, self._cells(name, fresh=True))
-        return out
+        return self._scan_all_full()[0]
 
     def reg_options(self) -> dict:
         with self.lock:
             allp, marks = self._scan_all_full()
-            pos = [p for p in allp if p.standard and p.tank]
-            tanks = sorted({p.tank for p in pos})
-            every = sorted({p.tank for p in allp if p.tank} | {t for (t, _) in marks})   # harita: konumu/işareti olan her tank
-            return {"tanks": tanks, "all_tanks": every, "types": STRAW_TYPES, "colors": COLORS,
-                    "free_rows": {str(t): sum(len(p.free_rows) for p in pos if p.tank == t) for t in tanks}}
+            free: dict[int, int] = {}
+            for p in allp:
+                if p.tank and p.standard and not p.loose:
+                    free[p.tank] = free.get(p.tank, 0) + p.capacity
+            order = lambda t: self.TANK_ORDER.index(t) if t in self.TANK_ORDER else 99
+            every = sorted({p.tank for p in allp if p.tank} | {t for (t, _) in marks}, key=lambda t: (order(t), t))
+            return {"tanks": [{"id": t, "label": tank_label(t), "free": free[t]}
+                              for t in sorted(free, key=lambda t: (order(t), t))],
+                    "map_tanks": [{"id": t, "label": tank_label(t)} for t in every],
+                    "devices": DEVICES, "colors": COLORS}
 
     @staticmethod
-    def _pkey(p: Position) -> tuple:
-        return (p.sheet, p.tank, p.canister, p.label, p.rows[0].row)
+    def _pkey(p: Position) -> str:
+        return p.pid
 
-    def reg_suggest(self, tank: int, n: int, kat: str) -> dict:
-        if not 1 <= n <= 12:
-            return {"ok": False, "message": "Straw sayısı 1–12 olmalı."}
-        if kat not in ("otomatik", "alt", "ust"):
-            return {"ok": False, "message": "Geçersiz kat."}
+    @staticmethod
+    def _clean(v: str, limit: int = 80):
+        v = str(v or "").strip()
+        if len(v) > limit or v.startswith("=") or re.search(r"[\x00-\x1f]", v):
+            return None
+        return v
+
+    def _patient(self, d: dict):
+        soyad, ad, esi = (tr_upper(str(d.get(k, ""))) for k in ("soyad", "ad", "esi"))
+        if not soyad or not ad:
+            return None, "Soyad ve ad zorunlu."
+        try:
+            tarih = date.fromisoformat(str(d.get("tarih", "")))
+        except ValueError:
+            return None, "Tarihi seçin."
+        for v in (soyad, ad, esi):
+            if len(v) > 60 or v.startswith("=") or re.search(r"[\x00-\x1f]", v):
+                return None, "Ad/soyad geçersiz karakter içeriyor."
+        return {"soyad": soyad, "ad": ad, "esi": esi, "tarih": tarih}, None
+
+    @staticmethod
+    def _part(p: Position) -> str:
+        return p.kat.capitalize() if p.kind == "goblet" else ""
+
+    def _title(self, p: Position) -> str:
+        what = {"pos": "Pozisyon ", "list": "Harf "}.get(p.kind, "Goblet ")
+        return " · ".join(x for x in (tank_label(p.tank), self._part(p), f"Kanister {p.canister}", what + str(p.label)) if x)
+
+    def reg_suggest(self, req: dict) -> dict:
+        """req: {sample: embryo|sperm, tanks: [id], straws: [{device, hucre}] | sperm: {hucre, vials, note}, patient: {...}}"""
+        sample = req.get("sample", "embryo")
+        if sample not in ("embryo", "sperm"):
+            return {"ok": False, "message": "Geçersiz örnek türü."}
+        patient, err = self._patient(req.get("patient", {}))
+        if err:
+            return {"ok": False, "message": err}
+        try:
+            tanks = {int(t) for t in req.get("tanks", [])}
+        except (TypeError, ValueError):
+            tanks = set()
+        if not tanks:
+            return {"ok": False, "message": "En az bir tank seçin."}
+        straws, sperm = [], {}
+        if sample == "embryo":
+            for st in req.get("straws", []):
+                hucre = self._clean(st.get("hucre", ""))
+                if st.get("device") not in DEVICES or hucre is None:
+                    return {"ok": False, "message": "Straw türü ya da HÜCRE bilgisi geçersiz."}
+                straws.append({"device": st["device"], "hucre": hucre})
+            if not 1 <= len(straws) <= 12:
+                return {"ok": False, "message": "1–12 straw girin."}
+        else:
+            hucre = self._clean(req.get("sperm", {}).get("hucre", ""))
+            note = self._clean(req.get("sperm", {}).get("note", ""), 60)
+            try:
+                vials = int(req.get("sperm", {}).get("vials"))
+            except (TypeError, ValueError):
+                vials = 0
+            if hucre is None or note is None or not 1 <= vials <= 20:
+                return {"ok": False, "message": "Sperm bilgileri geçersiz (vial sayısı 1–20)."}
+            sperm = {"hucre": hucre, "vials": vials, "note": note}
         with self.lock:
-            pool = [p for p in self._scan_all() if p.standard and p.tank == tank
-                    and (kat == "otomatik" or p.kat == ("üst" if kat == "ust" else "alt"))]
-            plans = suggest(pool, n, colored=True, limit=8)
+            allp = self._scan_all()
+            cands = [p for p in allp if p.tank in tanks and p.standard and not p.loose]
+            plans = (plan_embryo(allp, cands, patient, straws) if sample == "embryo"
+                     else plan_sperm(allp, cands, patient, sperm))
             self._plans = {}
             out = []
             for i, plan in enumerate(plans):
                 pid = f"p{i}"
-                self._plans[pid] = plan
-                out.append({"id": pid, "span": plan.span, "placements": [{
-                    "sheet": pl.position.sheet, "canister": pl.position.canister, "label": pl.position.label,
-                    "kat": pl.position.kat, "rows": [r.row for r in pl.rows], "colors": pl.colors,
-                    "free_colors": pl.position.free_colors, "key": list(self._pkey(pl.position)),
-                    "free_row_count": len(pl.position.free_rows)} for pl in plan.placements]})
+                self._plans[pid] = {"plan": plan, "sample": sample, "patient": patient}
+                out.append({"id": pid, "score": round(plan.score, 1), "unplaced": plan.unplaced,
+                            "warnings": plan.warnings, "placements": [self._placement_json(pl) for pl in plan.placements]})
             return {"ok": True, "plans": out,
-                    "message": "" if out else "Bu tankta, seçilen kat ve straw sayısı için uygun yer yok."}
+                    "message": "" if out else "Seçtiğiniz tanklarda bu örnek türü için uygun boş yer bulunamadı. "
+                                              "Başka bir tank seçmeyi deneyin."}
+
+    def _placement_json(self, pl) -> dict:
+        p = pl.position
+        new = {it.row: it for it in pl.items}
+        slots = []
+        for i, r in enumerate(p.rows, 1):
+            it = new.get(r.row)
+            slots.append({"pos": i, "row": r.row, "new": it is not None,
+                          "state": "new" if it else ("empty" if not r.occupied else "full"),
+                          "color": (it.color if it else r.color), "device": (it.device if it else vial_kind(r.vial))})
+        return {"pid": p.pid, "title": self._title(p), "sheet": p.sheet, "kind": p.kind, "why": pl.why, "slots": slots,
+                "free_colors": [c for c in COLORS if c not in p.used_colors],
+                "items": [{"row": it.row, "pos": it.pos, "device": it.device, "color": it.color, "hucre": it.hucre,
+                           "vial": it.vial} for it in pl.items]}
 
     def _date_format(self, positions: list[Position], sheet: str):
         for p in positions:
@@ -218,56 +293,57 @@ class EditService:
                             return None
         return None
 
-    def reg_preview(self, plan_id: str, straw_type: str, straws: list[dict], patient: dict) -> dict:
+    def reg_preview(self, plan_id: str, items: list[dict]) -> dict:
+        """items: plan sırasıyla [{color, hucre}] — renk seçimi ve HÜCRE metni burada düzenlenebilir."""
         with self.lock:
-            plan = self._plans.get(plan_id)
-            if not plan:
+            rec = self._plans.get(plan_id)
+            if not rec:
                 return {"ok": False, "message": "Öneri süresi dolmuş; yeniden yer önerin."}
-            if straw_type not in STRAW_TYPES:
-                return {"ok": False, "message": "Geçersiz straw türü."}
-            soyad, ad, esi = (tr_upper(str(patient.get(k, ""))) for k in ("soyad", "ad", "esi"))
-            if not soyad or not ad:
-                return {"ok": False, "message": "Soyad ve ad zorunlu."}
-            try:
-                tarih = date.fromisoformat(str(patient.get("tarih", "")))
-            except ValueError:
-                return {"ok": False, "message": "Geçersiz tarih."}
-            for v in (soyad, ad, esi):
-                if len(v) > 60 or v.startswith("=") or re.search(r"[\x00-\x1f]", v):
-                    return {"ok": False, "message": "Ad/soyad geçersiz karakter içeriyor."}
-            fresh = self._scan_all()
-            by_key = {self._pkey(p): p for p in fresh}
-            expected = sum(len(pl.rows) for pl in plan.placements)
-            if len(straws) != expected:
+            plan, sample, patient = rec["plan"], rec["sample"], rec["patient"]
+            if len(items) != sum(len(pl.items) for pl in plan.placements):
                 return {"ok": False, "message": "Straw sayısı öneriyle uyuşmuyor."}
+            fresh = self._scan_all()
+            by_pid = {p.pid: p for p in fresh}
             fmt = self._date_format(fresh, plan.placements[0].position.sheet)
             changes: list[Change] = []
             i = 0
             for pl in plan.placements:
-                pos = by_key.get(self._pkey(pl.position))
+                pos = by_pid.get(pl.position.pid)
                 if pos is None:
                     return {"ok": False, "message": "Harita değişmiş; yeniden yer önerin."}
                 free = {r.row for r in pos.free_rows}
-                colors = []
-                for row in pl.rows:
-                    st = straws[i]; i += 1
-                    color, hucre = st.get("color"), str(st.get("hucre", "")).strip()
-                    if row.row not in free:
-                        return {"ok": False, "message": f"{pos.name}: satır {row.row} artık boş değil. Yeniden yer önerin."}
-                    if color not in COLORS or color in colors or color in pos.used_colors:
-                        return {"ok": False, "message": f"{pos.name}: renk seçimi geçersiz (bu goblette aynı renk iki kez "
-                                                        "olamaz veya renk zaten kullanımda)."}
-                    if not hucre or len(hucre) > 80 or hucre.startswith("=") or re.search(r"[\x00-\x1f]", hucre):
-                        return {"ok": False, "message": "HÜCRE bilgisi boş veya geçersiz."}
-                    colors.append(color)
-                    vals = {"soyad": soyad, "ad": ad, "esi": esi or None, "tarih": tarih, "hucre": hucre,
-                            "vial": vial_text(straw_type, color)}
+                taken = set(pos.used_colors)
+                for it in pl.items:
+                    req = items[i]; i += 1
+                    hucre = self._clean(req.get("hucre", ""))
+                    if hucre is None:
+                        return {"ok": False, "message": "HÜCRE bilgisi geçersiz."}
+                    if it.row not in free:
+                        return {"ok": False, "message": f"{pos.name}: satır {it.row} artık boş değil. Yeniden yer önerin."}
+                    if sample == "embryo":
+                        color = req.get("color")
+                        if it.device == "RAPIDI":
+                            color = None
+                            if pos.group_type == "color":
+                                return {"ok": False, "message": f"{pos.name}: bu bölüme renkli straw konmuş; yeniden yer önerin."}
+                        else:
+                            if pos.group_type == "rapid":
+                                return {"ok": False, "message": f"{pos.name}: bu bölüme rapidi konmuş; yeniden yer önerin."}
+                            if color not in COLORS or color in taken:
+                                return {"ok": False, "message": f"{pos.name}: renk seçimi geçersiz (bir goblette aynı renk "
+                                                                "iki kez olamaz veya renk zaten kullanımda)."}
+                            taken.add(color)
+                        vial = vial_text(it.device, color, it.pos)
+                    else:
+                        vial = it.vial
+                    vals = {"soyad": patient["soyad"], "ad": patient["ad"], "esi": patient["esi"] or None,
+                            "tarih": patient["tarih"], "hucre": hucre or None, "vial": vial}
+                    row = next(r for r in pos.rows if r.row == it.row)
                     for f, v in vals.items():
                         if v is None:
                             continue
                         rr, cc = row.cells[f]
-                        changes.append(Change(pos.sheet, f"{get_column_letter(cc)}{rr}", v,
-                                              fmt if f == "tarih" else None))
+                        changes.append(Change(pos.sheet, f"{get_column_letter(cc)}{rr}", v, fmt if f == "tarih" else None))
             preview = []
             for ch in changes:
                 ev = evaluate(self.backend, ch)
@@ -312,22 +388,46 @@ class EditService:
                     "message": "Hazırlandı; 'OneDrive'a yükle' ile tamamlayın." if self.backend.needs_commit
                     else f"Kayıt yazıldı ({done} hücre)."}
 
-
     # ---- hasta çıkarma: satırın hücrelerini boşaltır (dosya/satır silinmez)
     CLEAR_FIELDS = ("soyad", "ad", "esi", "tarih", "hucre", "vial")
 
-    def rem_search(self, query: str) -> dict:
-        q = fold(query)
-        if len(q) < 2:
-            return {"ok": False, "message": "En az 2 harf yazın."}
+    @staticmethod
+    def _matcher(query: str, date_iso: str | None):
+        """(kelimeler, tarih) → satır eşleştirici. Hasta aramada: tüm kelimeler soyad+ad+eşi içinde geçmeli; tarih verilmişse eşleşmeli."""
+        tokens = [t for t in fold(query).split(" ") if t]
+        want = None
+        if date_iso:
+            try:
+                want = date.fromisoformat(date_iso)
+            except ValueError:
+                want = None
+        if not tokens and want is None:
+            return None, "Ad, soyad ya da tarih yazın."
+        if tokens and sum(len(t) for t in tokens) < 2 and want is None:
+            return None, "En az 2 harf yazın."
+
+        def match(r) -> bool:
+            if not (r.soyad or r.ad):
+                return False
+            if tokens:
+                hay = fold(f"{r.soyad} {r.ad} {r.esi}")
+                if not all(t in hay for t in tokens):
+                    return False
+            return want is None or parse_date(r.date_text) == want
+        return match, None
+
+    def rem_search(self, query: str, date_iso: str | None = None) -> dict:
+        match, err = self._matcher(query, date_iso)
+        if err:
+            return {"ok": False, "message": err}
         hits = []
         with self.lock:
             for p in self._scan_all():
                 for r in p.rows:
-                    full = (fold(f"{r.soyad} {r.ad}"), fold(f"{r.ad} {r.soyad}"))
-                    if (r.soyad or r.ad) and any(q in f for f in full):
+                    if match(r):
                         hits.append({"sheet": p.sheet, "tank": p.tank, "canister": p.canister, "label": p.label,
-                                     "kat": p.kat, "row": r.row, "col": r.cells["no"][1], "soyad": r.soyad, "ad": r.ad, "esi": r.esi,
+                                     "tank_label": tank_label(p.tank), "kat": p.kat, "row": r.row, "col": r.cells["no"][1],
+                                     "soyad": r.soyad, "ad": r.ad, "esi": r.esi,
                                      "tarih": r.date_text, "hucre": r.hucre, "vial": r.vial})
         hits.sort(key=lambda h: (h["sheet"], h["tank"] or 0, h["canister"] or 0, h["row"]))
         return {"ok": True, "hits": hits[:200], "truncated": len(hits) > 200}
@@ -416,7 +516,7 @@ class EditService:
     def _scan_all_full(self):
         out, marks = [], set()
         for name in self.backend.sheet_names():
-            pos, mk = scan_sheet_full(name, self._cells(name, fresh=True))
+            pos, mk = scan_layout(name, self._cells(name, fresh=True))
             out += pos
             marks |= mk
         return out, marks
@@ -441,13 +541,14 @@ class EditService:
                 if p.loose:
                     ce["loose"].append({"label": p.label, "kat": p.kat, "slots": slots})
                     continue
-                g = ce["goblets"].setdefault(p.number, {"n": p.number, "alt": None, "ust": None})
+                g = ce["goblets"].setdefault(p.number, {"n": p.number, "label": p.label, "special": p.special,
+                                                        "alt": None, "ust": None})
                 key = "ust" if p.kat == "üst" else "alt"
                 if g[key] is None:
                     g[key] = {"label": p.label, "slots": slots, "odd": False}
                 else:                                    # aynı etiketin ek satırları (ör. 5. straw satırı) aynı goblette gösterilir
                     g[key]["slots"] += slots
-                g[key]["odd"] = len(g[key]["slots"]) != SLOTS
+                g[key]["odd"] = (not p.special) and len(g[key]["slots"]) != SLOTS
             stats = {"slots": 0, "free": 0, "rapidi": 0, "other": 0, "odd": 0, **{c: 0 for c in COLORS}}
             for p in allp:
                 for r in p.rows:
@@ -468,7 +569,8 @@ class EditService:
                 if not gs and not ce["loose"]:
                     note = "Bu canister için haritada kayıt bulunamadı (boş olabilir ya da düzeni farklı olabilir)."
                 out.append({"canister": c, "goblets": gs, "loose": ce["loose"], "note": note})
-            return {"ok": True, "tank": tank, "has_ust": any(p.kat == "üst" for p in allp), "stats": stats,
+            return {"ok": True, "tank": tank, "tank_label": tank_label(tank),
+                    "has_ust": any(p.kat == "üst" for p in allp), "stats": stats,
                     "canisters": out}
 
     def _row_by_id(self, slot_id: str):
@@ -494,18 +596,18 @@ class EditService:
                     "vial": r.vial, "soyad": r.soyad, "ad": r.ad, "esi": r.esi, "tarih": r.date_text,
                     "hucre": r.hucre}
 
-    def map_find(self, query: str, tank: int | None = None) -> dict:
-        q = fold(query)
-        if len(q) < 2:
-            return {"ok": False, "message": "En az 2 harf yazın."}
+    def map_find(self, query: str, tank: int | None = None, date_iso: str | None = None) -> dict:
+        match, err = self._matcher(query, date_iso)
+        if err:
+            return {"ok": False, "message": err}
         hits = []
         with self.lock:
             for p in self._scan_all():
                 if tank is not None and p.tank != tank:
                     continue
                 for r in p.rows:
-                    if (r.soyad or r.ad) and any(q in fold(f) for f in (f"{r.soyad} {r.ad}", f"{r.ad} {r.soyad}")):
+                    if match(r):
                         hits.append({"id": f"{r.row}:{r.cells['no'][1]}:{p.sheet}",
-                                     "where": f"Tank {p.tank or '?'} / Canister {p.canister or '?'} / {p.label} "
+                                     "where": f"{tank_label(p.tank)} / Canister {p.canister or '?'} / {p.label} "
                                               f"({p.kat} kat) · satır {r.row}", "vial": r.vial})
         return {"ok": True, "hits": hits[:100]}

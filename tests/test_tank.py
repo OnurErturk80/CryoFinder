@@ -404,67 +404,87 @@ def sheet_of(fake):
 PATIENT = {"soyad": "yılmaz", "ad": "ayşe", "esi": "", "tarih": "2026-10-09"}
 
 
+def reg_req(devices=("CRYOLOCK", "CRYOLOCK"), hucre="D5 (4AA)", tanks=(1,), patient=PATIENT, sample="embryo", **extra):
+    req = {"sample": sample, "tanks": list(tanks), "patient": patient,
+           "straws": [{"device": d, "hucre": hucre} for d in devices]}
+    req.update(extra)
+    return req
+
+
+def items_of(plan):
+    return [{"color": it["color"], "hucre": it["hucre"]} for pl in plan["placements"] for it in pl["items"]]
+
+
 def test_registration_end_to_end_excel_api(tmp_path):
     fake, svc = make_reg_service(tmp_path)
-    assert svc.reg_options()["tanks"] == [1]
-    sug = svc.reg_suggest(1, 2, "otomatik")
+    assert [t["id"] for t in svc.reg_options()["tanks"]] == [1]
+    sug = svc.reg_suggest(reg_req())
+    assert sug["ok"] and 1 <= len(sug["plans"]) <= 3
     plan = sug["plans"][0]
     pl = plan["placements"][0]
-    assert len(sug["plans"]) > 0 and plan["span"] == 1 and len(pl["rows"]) == 2
-    straws = [{"color": c, "hucre": "D5 (4AA)"} for c in pl["colors"]]
-    prev = svc.reg_preview(plan["id"], "CRYOLOCK", straws, PATIENT)
-    assert prev["ok"] and prev["count"] == 10                 # 2 straw × (soyad, ad, tarih, hücre, vial)
+    assert len(plan["placements"]) == 1 and "Goblet 4A" in pl["title"]       # yarı dolu goblet önce doldurulur
+    assert [(it["pos"], it["color"], it["vial"]) for it in pl["items"]] == [
+        (3, "TURUNCU", "1 CRYOLOCKTURUNCU 3"), (4, "YEŞİL", "1 CRYOLOCKYEŞİL 4")]   # renk gobletteki sıraya göre, sonda sıra no
+    assert any("Yarı dolu" in w for w in pl["why"])
+    prev = svc.reg_preview(plan["id"], items_of(plan))
+    assert prev["ok"] and prev["count"] == 10                                  # 2 straw × (soyad, ad, tarih, hücre, vial)
     assert not any(v["path"].startswith("Yedekler/T") for v in fake.items.values())   # onaydan önce yazma/yedek yok
     res = svc.reg_apply(prev["id"])
     assert res["ok"] and res["backup"].startswith("Yedekler/")
     ws = sheet_of(fake)
-    r0, r1 = pl["rows"]
-    assert (ws.cell(r0, 2).value, ws.cell(r0, 3).value) == ("YILMAZ", "AYŞE")          # Türkçe büyük harf
-    assert ws.cell(r0, 7).value == f"1 CRYOLOCK{pl['colors'][0]}"
-    assert ws.cell(r1, 7).value == f"1 CRYOLOCK{pl['colors'][1]}" and pl["colors"][0] != pl["colors"][1]
-    assert r1 == r0 + 1                                                                  # yan yana
-    assert ws.cell(r0, 5).value in (46304, 46304.0)                                     # 2026-10-09 Excel seri numarası
+    r0, r1 = [it["row"] for it in pl["items"]]
+    assert (ws.cell(r0, 2).value, ws.cell(r0, 3).value) == ("YILMAZ", "AYŞE")            # Türkçe büyük harf
+    assert ws.cell(r0, 7).value == "1 CRYOLOCKTURUNCU 3" and ws.cell(r1, 7).value == "1 CRYOLOCKYEŞİL 4"
+    assert r1 == r0 + 1                                                                    # yan yana
+    from datetime import datetime as _dt
+    assert ws.cell(r0, 5).value in (46304, 46304.0, _dt(2026, 10, 9))                      # 2026-10-09 gerçek tarih (seri no)
+    assert ws.cell(r0, 5).number_format == "dd.mm.yyyy"                                    # biçim komşu tarih hücresinden kopyalandı
     assert "registration" in (tmp_path / "log.jsonl").read_text(encoding="utf-8")
-    assert not svc.reg_apply(prev["id"])["ok"]                                           # tek kullanımlık
+    assert not svc.reg_apply(prev["id"])["ok"]                                             # tek kullanımlık
 
 
 def test_registration_validation(tmp_path):
     fake, svc = make_reg_service(tmp_path)
-    plan = svc.reg_suggest(1, 2, "otomatik")["plans"][0]
-    pl = plan["placements"][0]
-    same = [{"color": pl["colors"][0], "hucre": "D5"}] * 2
-    assert not svc.reg_preview(plan["id"], "CRYOLOCK", same, PATIENT)["ok"]                          # aynı renk iki kez
-    ok = [{"color": c, "hucre": "D5"} for c in pl["colors"]]
-    assert not svc.reg_preview(plan["id"], "CRYOLOCK", ok, {**PATIENT, "soyad": ""})["ok"]           # soyad zorunlu
-    assert not svc.reg_preview(plan["id"], "CRYOLOCK", ok, {**PATIENT, "tarih": "09.10.2026"})["ok"]  # tarih biçimi
-    assert not svc.reg_preview(plan["id"], "BILINMEYEN", ok, PATIENT)["ok"]
-    assert not svc.reg_preview(plan["id"], "CRYOLOCK", [{"color": "MOR", "hucre": "D5"}] * 2, PATIENT)["ok"]
-    assert not svc.reg_preview(plan["id"], "CRYOLOCK", [{"color": c, "hucre": ""} for c in pl["colors"]], PATIENT)["ok"]
-    assert not svc.reg_preview(plan["id"], "CRYOLOCK", [{"color": c, "hucre": "=1+1"} for c in pl["colors"]], PATIENT)["ok"]
+    assert not svc.reg_suggest(reg_req(patient={**PATIENT, "soyad": ""}))["ok"]
+    assert not svc.reg_suggest(reg_req(patient={**PATIENT, "tarih": "09.10.2026"}))["ok"]
+    assert not svc.reg_suggest(reg_req(tanks=()))["ok"]
+    assert not svc.reg_suggest(reg_req(devices=("BILINMEYEN",)))["ok"]
+    assert not svc.reg_suggest(reg_req(hucre="=1+1"))["ok"]
+    assert not svc.reg_suggest(reg_req(devices=("CRYOLOCK",) * 13))["ok"]
+    assert not svc.reg_suggest(reg_req(sample="bilinmeyen"))["ok"]
+    plan = svc.reg_suggest(reg_req())["plans"][0]
+    its = items_of(plan)
+    assert not svc.reg_preview(plan["id"], [its[0], its[0]])["ok"]                                  # aynı renk iki kez
+    assert not svc.reg_preview(plan["id"], [{"color": "MAVİ", "hucre": "D5"}, its[1]])["ok"]        # MAVİ bu gobletta kullanımda
+    assert not svc.reg_preview(plan["id"], [{"color": "MOR", "hucre": "D5"}, its[1]])["ok"]
+    assert not svc.reg_preview(plan["id"], [{"color": its[0]["color"], "hucre": "=1+1"}, its[1]])["ok"]
+    assert not svc.reg_preview(plan["id"], its[:1])["ok"] and not svc.reg_preview("yok", its)["ok"]
+    ok = svc.reg_preview(plan["id"], [{"color": it["color"], "hucre": ""} for it in its])          # HÜCRE boş olabilir (mevcut araç gibi)
+    assert ok["ok"] and ok["count"] == 8
 
 
 def test_registration_aborts_if_rows_filled_meanwhile(tmp_path):
     fake, svc = make_reg_service(tmp_path)
-    plan = svc.reg_suggest(1, 2, "otomatik")["plans"][0]
-    pl = plan["placements"][0]
-    prev = svc.reg_preview(plan["id"], "VİTRİFİT", [{"color": c, "hucre": "D5"} for c in pl["colors"]], PATIENT)
+    plan = svc.reg_suggest(reg_req())["plans"][0]
+    rows = [it["row"] for it in plan["placements"][0]["items"]]
+    prev = svc.reg_preview(plan["id"], items_of(plan))
     wb = load_workbook(io.BytesIO(fake.items["ID1"]["data"]))
-    wb["TANK 5"].cell(pl["rows"][1], 2).value = "BAŞKASI"        # biri aynı satıra yazdı
+    wb["TANK 5"].cell(rows[1], 2).value = "BAŞKASI"              # biri aynı satıra yazdı
     b = io.BytesIO(); wb.save(b); fake.external_edit(PATH, b.getvalue())
     res = svc.reg_apply(prev["id"])
     assert not res["ok"] and "Hiçbir şey yazılmadı" in res["message"]
-    assert sheet_of(fake).cell(pl["rows"][0], 2).value is None
+    assert sheet_of(fake).cell(rows[0], 2).value is None
 
 
 def test_registration_memory_mode_stages_then_commits(tmp_path):
     fake, svc = make_reg_service(tmp_path, excel_api=False)
-    plan = svc.reg_suggest(1, 3, "alt")["plans"][0]
-    pl = plan["placements"][0]
-    prev = svc.reg_preview(plan["id"], "CRYOTOP", [{"color": c, "hucre": "OOSİT"} for c in pl["colors"]], PATIENT)
+    plan = svc.reg_suggest(reg_req(devices=("VİTRİFİT",) * 3))["plans"][0]
+    row0 = plan["placements"][0]["items"][0]["row"]
+    prev = svc.reg_preview(plan["id"], items_of(plan))
     assert svc.reg_apply(prev["id"])["ok"] and svc.state()["staged"] == prev["count"]
-    assert sheet_of(fake).cell(pl["rows"][0], 2).value is None            # henüz yüklenmedi
+    assert sheet_of(fake).cell(row0, 2).value is None            # henüz yüklenmedi
     assert svc.commit()["ok"]
-    assert sheet_of(fake).cell(pl["rows"][0], 2).value == "YILMAZ"
+    assert sheet_of(fake).cell(row0, 2).value == "YILMAZ"
 
 
 def test_registration_http_endpoints(tmp_path):
@@ -473,19 +493,20 @@ def test_registration_http_endpoints(tmp_path):
     base = f"http://127.0.0.1:{srv.server_address[1]}"
     try:
         assert _call(base + "/api/reg/options")[0] == 403
-        sug = json.loads(_call(base + "/api/reg/suggest", token=token, body={"tank": 1, "n": 1, "kat": "otomatik"})[1])
+        opts = json.loads(_call(base + "/api/reg/options", token=token)[1])
+        assert opts["tanks"][0]["id"] == 1 and "CRYOLOCK" in opts["devices"]
+        sug = json.loads(_call(base + "/api/reg/suggest", token=token, body=reg_req(devices=("CRYOLOCK",)))[1])
         assert sug["ok"] and sug["plans"]
     finally:
         srv.shutdown()
 
 
 # ---- hasta çıkarma (hücre temizleme)
-def register_patient(svc, n=2, straw_type="CRYOLOCK"):
-    plan = svc.reg_suggest(1, n, "otomatik")["plans"][0]
-    pl = plan["placements"][0]
-    prev = svc.reg_preview(plan["id"], straw_type, [{"color": c, "hucre": "D5 (4AA)"} for c in pl["colors"]], PATIENT)
+def register_patient(svc, devices=("CRYOLOCK", "CRYOLOCK")):
+    plan = svc.reg_suggest(reg_req(devices=devices))["plans"][0]
+    prev = svc.reg_preview(plan["id"], items_of(plan))
     assert svc.reg_apply(prev["id"])["ok"]
-    return pl["rows"]
+    return [it["row"] for pl in plan["placements"] for it in pl["items"]]
 
 
 def test_removal_clears_cells_keeps_label_makes_backup_and_logs(tmp_path):
@@ -502,7 +523,7 @@ def test_removal_clears_cells_keeps_label_makes_backup_and_logs(tmp_path):
     ws = sheet_of(fake)
     for r in rows:
         assert [ws.cell(r, c).value for c in range(2, 8)] == [None] * 6      # SOYAD..VİAL boş
-        assert ws.cell(r, 1).value == "3A"                                      # NO etiketi kalır
+        assert ws.cell(r, 1).value == "4A"                                      # NO etiketi kalır
     assert svc.rem_search("yilmaz")["hits"] == []
     log = (tmp_path / "log.jsonl").read_text(encoding="utf-8")
     assert '"removal"' in log and "YILMAZ" in log                               # eski değerler kayıtta
@@ -514,8 +535,9 @@ def test_removal_frees_the_color_again(tmp_path):
     rows = register_patient(svc)
     hits = svc.rem_search("yilmaz")["hits"]
     svc.rem_apply(svc.rem_preview([{"sheet": h["sheet"], "row": h["row"], "col": h["col"]} for h in hits])["id"])
-    plan = svc.reg_suggest(1, 2, "otomatik")["plans"][0]
-    assert plan["placements"][0]["rows"] == rows and plan["placements"][0]["colors"] == ["MAVİ", "SARI"]
+    plan = svc.reg_suggest(reg_req())["plans"][0]
+    assert [it["row"] for it in plan["placements"][0]["items"]] == rows
+    assert [it["color"] for it in plan["placements"][0]["items"]] == ["TURUNCU", "YEŞİL"]        # boşalan renkler yeniden kullanılabilir
 
 
 def test_removal_partial_selection_and_validation(tmp_path):
@@ -759,7 +781,7 @@ def test_map_view_shows_every_canister_with_patients(tmp_path):
     assert m["stats"]["odd"] == 6 and m["stats"]["MAVİ"] == 3
     m3 = svc.map_view(3)
     assert {x["canister"] for x in m3["canisters"]} == {1, 2} and all(x["note"] for x in m3["canisters"])
-    assert svc.map_view(1)["ok"] and svc.reg_options()["tanks"] == [1]            # öneri yalnızca standart konumları kullanır
+    assert svc.map_view(1)["ok"] and [t["id"] for t in svc.reg_options()["tanks"]] == [1]            # öneri yalnızca standart konumları kullanır
     blob = json.dumps(m, ensure_ascii=False)
     assert "ETIKETSIZ" not in blob and "TEKSOYAD" not in blob                      # adlar harita verisinde yok
 
@@ -778,5 +800,225 @@ def test_unlabelled_patients_are_searchable_and_removable(tmp_path):
 def test_map_tank_list_includes_tanks_without_standard_positions(tmp_path):
     fake, svc = make_odd_service(tmp_path)
     o = svc.reg_options()
-    assert o["tanks"] == [1]                       # yer önerisi yalnızca standart konumu olan tanklar
-    assert o["all_tanks"] == [1, 2, 3]             # harita: konumu veya canister işareti olan her tank
+    assert [t["id"] for t in o["tanks"]] == [1]                      # yer önerisi yalnızca standart konumu olan tanklar
+    assert [t["id"] for t in o["map_tanks"]] == [1, 2, 3]            # harita: konumu veya canister işareti olan her tank
+
+
+# ---- mevcut kullanılan araçla (artifact) aynı kurallar: planlayıcı
+from datetime import date as _date
+
+from tank_haritasi.harita import (DEVICES, find_small_tank_col, parse_date, scan_extra, scan_layout, tank_label)
+from tank_haritasi.planner import plan_embryo, plan_sperm
+
+PAT = {"soyad": "TESTSOYAD", "ad": "TESTAD", "esi": "", "tarih": _date(2026, 10, 9)}
+
+
+def straws(*devices):
+    return [{"device": d, "hucre": "D5"} for d in devices]
+
+
+def test_colors_follow_slot_position_and_vial_has_slot_number():
+    ps = scan_sheet("TANK 5", make_map_cells())
+    empty = [p for p in ps if p.canister == 2 and p.number <= 4]            # canister 2'nin boş gobletleri
+    plan = plan_embryo(ps, empty, PAT, straws("CRYOLOCK", "VİTRİFİT", "CRYOLOCK", "CRYOLOCK"))[0]
+    assert len(plan.placements) == 1
+    assert [(i.pos, i.color) for i in plan.placements[0].items] == [(1, "MAVİ"), (2, "SARI"), (3, "TURUNCU"), (4, "YEŞİL")]
+    assert [i.vial for i in plan.placements[0].items] == [
+        "1 CRYOLOCKMAVİ 1", "1 VİTRİFİTSARI 2", "1 CRYOLOCKTURUNCU 3", "1 CRYOLOCKYEŞİL 4"]
+
+
+def test_used_position_colour_falls_back_to_next_free_colour():
+    ps = scan_sheet("TANK 5", make_map_cells())
+    g4a = [p for p in ps if p.canister == 1 and p.label == "4A"]               # 4A: SARI ve MAVİ kullanımda, boş satırlar 3-4
+    plan = plan_embryo(ps, g4a, PAT, straws("CRYOLOCK", "CRYOLOCK"))[0]
+    assert [(i.pos, i.color) for i in plan.placements[0].items] == [(3, "TURUNCU"), (4, "YEŞİL")]
+
+
+def test_rapid_and_coloured_straws_never_share_a_goblet():
+    ps = scan_sheet("TANK 5", make_map_cells())
+    cands = [p for p in ps if p.canister == 1]
+    for plan in plan_embryo(ps, cands, PAT, straws("CRYOLOCK", "CRYOLOCK"), 10):
+        assert all(pl.position.group_type != "rapid" for pl in plan.placements)       # renkli straw rapidi olan bölüme girmez
+    for plan in plan_embryo(ps, cands, PAT, straws("RAPIDI", "RAPIDI"), 10):
+        for pl in plan.placements:
+            assert pl.position.group_type in ("rapid", "empty")                       # rapidi renkli bölüme girmez
+            assert all(i.color is None and i.vial.startswith("1 RAPIDI ") for i in pl.items)
+    mixed = plan_embryo(ps, cands, PAT, straws("RAPIDI", "CRYOLOCK"))[0]               # renkliler önce, rapidi sonra
+    assert [i.device for pl in mixed.placements for i in pl.items] == ["CRYOLOCK", "RAPIDI"]
+
+
+def test_partial_group_preferred_over_opening_a_new_one():
+    ps = scan_sheet("TANK 5", make_map_cells())
+    cands = [p for p in ps if p.canister == 1 and p.group_type != "rapid"]
+    plan = plan_embryo(ps, cands, PAT, straws("CRYOLOCK", "CRYOLOCK"))[0]
+    pl = plan.placements[0]
+    assert pl.position.label == "4A" and any("yeni grup açılmaz" in w for w in pl.why) and any("tam doldurur" in w for w in pl.why)
+
+
+def _with_patient(cells, row, soyad, ad, vial):
+    cells = dict(cells)
+    cells[(row, 2)], cells[(row, 3)], cells[(row, 7)] = soyad, ad, vial
+    return cells
+
+
+def test_same_patient_group_is_preferred():
+    cells = _with_patient(make_map_cells(), 29, "ASDF", "QWER", "1 CRYOLOCKMAVİ 1")      # 7A'nın 1. satırı
+    ps = scan_sheet("TANK 5", cells)
+    cands = [p for p in ps if p.canister == 1 and p.group_type != "rapid"]
+    plan = plan_embryo(ps, cands, {**PAT, "soyad": "asdf", "ad": "qwer"}, straws("CRYOLOCK"))[0]   # harf/büyüklük duyarsız
+    pl = plan.placements[0]
+    assert pl.position.label == "7A" and any("Aynı hastanın 1 straw" in w for w in pl.why)
+    assert pl.items[0].pos == 2 and pl.items[0].color == "SARI"
+
+
+def test_sibling_half_of_same_goblet_is_preferred():
+    cells = make_map_cells()
+    for r in range(29, 33):                                                           # alt katta 7A tamamen bu hastanın
+        cells = _with_patient(cells, r, "ASDF", "QWER", f"1 CRYOLOCK{['MAVİ','SARI','TURUNCU','YEŞİL'][r - 29]} {r - 28}")
+    alt = scan_sheet("TANK 5", cells)
+    ust = scan_sheet("TANK 5 ÜST", make_map_cells())
+    allp = alt + ust
+    cands = [p for p in allp if p.canister == 1 and p.label in ("7A", "8A") and p.capacity > 0]   # alt 7A dolu; üst 7A kardeş
+    plan = plan_embryo(allp, cands, {**PAT, "soyad": "ASDF", "ad": "QWER"}, straws("CRYOLOCK"))[0]
+    pl = plan.placements[0]
+    assert (pl.position.kat, pl.position.label) == ("üst", "7A") and any("alt bölümünde bu hasta var" in w for w in pl.why)
+
+
+def test_split_across_groups_is_penalised_and_warned():
+    ps = scan_sheet("TANK 5", make_map_cells())
+    cands = [p for p in ps if p.canister == 2 and p.number <= 4]                       # 4 boş goblet
+    single = plan_embryo(ps, cands, PAT, straws(*["CRYOLOCK"] * 4))[0]
+    six = plan_embryo(ps, cands, PAT, straws(*["CRYOLOCK"] * 6))
+    assert len(single.placements) == 1 and not single.warnings
+    assert len(six[0].placements) == 2 and any("farklı gruba bölünüyor" in w for w in six[0].warnings)
+    sigs = ["+".join(sorted(pl.position.pid for pl in p.placements)) for p in six]
+    assert len(sigs) == len(set(sigs)) and len(six) <= 3
+
+
+def test_no_place_gives_unplaced_warning():
+    ps = scan_sheet("TANK 5", make_map_cells())
+    plans = plan_embryo(ps, [p for p in ps if p.canister == 1 and p.label == "4A"], PAT, straws(*["CRYOLOCK"] * 3))
+    assert plans and plans[0].unplaced == 1 and any("uygun yer bulunamadı" in w for w in plans[0].warnings)
+
+
+# ---- özel düzenler: Tank 4 (harf+Ü/A), sperm sayfaları (harf satırları / pozisyonlar), küçük tank
+HDR = ["NO", "SOYAD", "AD", "EŞİ", "TARİH", "HÜCRE", "VİAL"]
+
+
+def block_cells(blocks, col=2, start=1):
+    """blocks: [(canister_no, [etiketler])]; her blok için başlık satırı + etiket satırları."""
+    cells, row = {}, start
+    for cn, labs in blocks:
+        cells[(row, col - 1)] = cn
+        for i, h in enumerate(HDR):
+            cells[(row, col + i)] = h
+        for k, lab in enumerate(labs):
+            cells[(row + 1 + k, col)] = lab
+        row += len(labs) + 2
+    return cells
+
+
+def test_scan_extra_goblets_with_upper_and_lower_parts_like_tank4():
+    labs = ["KU"] * 4 + ["KA"] * 4 + ["LU"] * 4 + ["LA"] * 4
+    cells = block_cells([(1, labs)])
+    cells[(2, 3)], cells[(2, 4)], cells[(2, 8)] = "ASIL", "KISI", "1 CRYOLOCKMAVİ 1"       # K üst katın 1. satırı dolu
+    ps, marks = scan_layout("TANK 4", cells)
+    assert {(p.tank, p.canister, p.label, p.kat, p.kind) for p in ps} == {
+        (4, 1, "K", "üst", "goblet"), (4, 1, "K", "alt", "goblet"), (4, 1, "L", "üst", "goblet"), (4, 1, "L", "alt", "goblet")}
+    ku = next(p for p in ps if p.label == "K" and p.kat == "üst")
+    ka = next(p for p in ps if p.label == "K" and p.kat == "alt")
+    assert ku.goblet_key == ka.goblet_key and ku.standard and ku.occupied_count == 1 and ku.capacity == 3
+    assert tank_label(4) == "Tank 4" and (4, 1) in marks
+
+
+def test_scan_extra_list_and_pos_kinds_for_sperm_sheets():
+    lst = block_cells([(1, list("ABCDEF")), (2, list("ABC"))])
+    ps, _ = scan_layout("YENİ SPERM", lst)
+    assert {p.kind for p in ps} == {"list"} and {p.tank for p in ps} == {101} and {p.canister for p in ps} == {1, 2}
+    assert len(ps) == 9 and all(p.max_fill == 1 and p.capacity == 1 for p in ps)
+    pos = block_cells([(1, ["A1", "A2", "A3", "A4", "B1", "B2", "B3", "B4"])])
+    ps2, _ = scan_layout("Sayfa1", pos)
+    assert {(p.kind, p.label, len(p.rows)) for p in ps2} == {("pos", "A", 4), ("pos", "B", 4)} and {p.tank for p in ps2} == {102}
+
+
+def test_small_tank_block_next_to_main_layout_is_found():
+    cells = make_map_cells()
+    cells[(2, 52)] = "KÜÇÜK TANK"                                  # AZ2 gibi etiketler
+    cells[(3, 52)] = "CANİSTER 1"
+    cells[(4, 52)], cells[(4, 53)] = "HARF", "SOYAD"
+    for k, lab in enumerate("ABCD"):
+        cells[(5 + k, 52)] = lab
+    cells[(9, 52)] = "CANİSTER 2"
+    for k, lab in enumerate("ABC"):
+        cells[(10 + k, 52)] = lab
+    assert find_small_tank_col({k: str(v) for k, v in cells.items()}) == 52
+    ps, marks = scan_layout("TANK 1+2+3", cells)
+    small = [p for p in ps if p.tank == 103]
+    assert {p.canister for p in small} == {1, 2} and all(p.kind == "list" for p in small) and (103, 1) in marks
+    assert len([p for p in ps if p.tank == 1 and not p.loose]) == 16               # ana düzen etkilenmedi
+
+
+def test_sperm_plan_list_rows_hold_all_vials_in_one_line():
+    lst = block_cells([(1, list("ABCDEF"))])
+    lst[(2, 3)], lst[(2, 4)] = "DOLU", "KISI"                    # A satırı dolu
+    ps, _ = scan_layout("YENİ SPERM", lst)
+    plan = plan_sperm(ps, [p for p in ps if p.standard], PAT, {"hucre": "EJAKÜLAT-CA", "vials": 3, "note": "(100 MİLYON)"})[0]
+    pl = plan.placements[0]
+    assert len(plan.placements) == 1 and pl.position.kind == "list" and pl.position.label != "A"
+    assert pl.items[0].vial == "3 (100 MİLYON)" and pl.items[0].hucre == "EJAKÜLAT-CA" and pl.items[0].color is None
+
+
+def test_sperm_plan_pos_kind_uses_one_row_per_vial():
+    pos = block_cells([(1, ["A1", "A2", "A3", "A4", "B1", "B2", "B3", "B4"])])
+    ps, _ = scan_layout("Sayfa1", pos)
+    plan = plan_sperm(ps, ps, PAT, {"hucre": "TESE", "vials": 3, "note": ""})[0]
+    assert len(plan.placements) == 1 and [i.vial for i in plan.placements[0].items] == ["1", "1", "1"]
+
+
+def test_parse_date_text_formats():
+    assert parse_date("07.02.2022") == _date(2022, 2, 7) and parse_date("2022-02-07 00:00:00") == _date(2022, 2, 7)
+    assert parse_date("7/2/2022") is None or parse_date("07/02/2022") == _date(2022, 2, 7)
+    assert parse_date("anlamsız") is None and parse_date("") is None
+
+
+# ---- hizmet katmanı: sperm kaydı ve hasta aramada kelime/tarih eşleşmesi
+def make_sperm_service(tmp_path):
+    from openpyxl import Workbook
+    wb = Workbook(); ws = wb.active; ws.title = "YENİ SPERM"
+    cells = block_cells([(1, list("ABCDEF"))])
+    cells[(2, 3)], cells[(2, 4)], cells[(2, 8)] = "DOLUSOYAD", "DOLUAD", "5"
+    for (r, c), v in cells.items():
+        ws.cell(r, c, v)
+    b = io.BytesIO(); wb.save(b)
+    fake = FakeOneDrive({PATH: b.getvalue()}, excel_api=True)
+    cl = GraphClient(lambda: "tok", session=fake, sleep=lambda s: None)
+    bk = Backuper(cl, "Yedekler", PATH, lambda: onedrive.download(cl, "ID1"))
+    return fake, EditService(ExcelApiBackend(cl, "ID1"), bk, logger(tmp_path), PATH)
+
+
+def test_service_sperm_registration_writes_one_line_with_vial_count(tmp_path):
+    fake, svc = make_sperm_service(tmp_path)
+    o = svc.reg_options()
+    assert o["tanks"] == [{"id": 101, "label": "Yeni sperm", "free": 5}]
+    sug = svc.reg_suggest({"sample": "sperm", "tanks": [101], "patient": PATIENT,
+                           "sperm": {"hucre": "EJAKÜLAT-CA", "vials": 2, "note": "(ÇOK AZ)"}})
+    assert sug["ok"]
+    plan = sug["plans"][0]
+    it = plan["placements"][0]["items"][0]
+    prev = svc.reg_preview(plan["id"], [{"color": None, "hucre": "EJAKÜLAT-CA"}])
+    assert prev["ok"] and svc.reg_apply(prev["id"])["ok"]
+    ws = load_workbook(io.BytesIO(fake.items["ID1"]["data"]))["YENİ SPERM"]
+    assert [ws.cell(it["row"], c).value for c in (3, 4, 7, 8)] == ["YILMAZ", "AYŞE", "EJAKÜLAT-CA", "2 (ÇOK AZ)"]
+    assert svc.reg_options()["tanks"][0]["free"] == 4                                  # bir satır doldu
+
+
+def test_patient_search_uses_all_words_and_optional_date(tmp_path):
+    fake, svc = make_reg_service(tmp_path)
+    register_patient(svc)
+    assert len(svc.rem_search("yilmaz ayse")["hits"]) == 2                              # kelimeler sırasız, hepsi gerekli
+    assert svc.rem_search("yilmaz mehmet")["hits"] == []
+    assert len(svc.rem_search("yil", "2026-10-09")["hits"]) == 2
+    assert svc.rem_search("yilmaz", "2025-01-01")["hits"] == []
+    assert len(svc.rem_search("", "2026-10-09")["hits"]) == 2                           # yalnızca tarihle de aranır
+    assert not svc.rem_search("")["ok"] and not svc.rem_search("y")["ok"]
+    assert len(svc.map_find("ayşe yılmaz", 1, "2026-10-09")["hits"]) == 2

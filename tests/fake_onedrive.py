@@ -24,6 +24,12 @@ def jv(v):
     return v
 
 
+def jv_text(serial):
+    import datetime as dt
+    d = dt.date(1899, 12, 30) + dt.timedelta(days=int(serial))
+    return f"{d.day:02d}.{d.month:02d}.{d.year}"
+
+
 class Resp:
     def __init__(self, status=200, body=None, content=b""):
         self.status_code, self._body, self.content, self.headers = status, body, content, {}
@@ -107,6 +113,8 @@ class FakeOneDrive:
             ws, cell = wb[m[1]], m[2]
             if method == "PATCH":
                 ws[cell] = js["values"][0][0]
+                if js.get("numberFormat"):
+                    ws[cell].number_format = js["numberFormat"][0][0]
                 b = io.BytesIO(); wb.save(b)
                 self.items[iid]["data"] = b.getvalue(); self.items[iid]["v"] += 1
                 return Resp(200, {})
@@ -117,6 +125,13 @@ class FakeOneDrive:
         if m:
             ws = wb[m[1]]
             grid = [[jv(c.value) if c.value is not None else "" for c in row] for row in ws.iter_rows()]
+            def shown(c):
+                v = c.value
+                if isinstance(v, (int, float)) and not isinstance(v, bool) and "yy" in str(c.number_format).lower():
+                    return jv_text(v)           # gerçek Excel gibi: tarih biçimli hücrenin GÖRÜNEN metni
+                if hasattr(v, "year"):          # openpyxl tarih biçimli hücreyi datetime olarak okur
+                    return f"{v.day:02d}.{v.month:02d}.{v.year}"
+                return "" if v is None else str(v)
             return Resp(200, {"address": f"{m[1]}!A1:{ws.dimensions.split(':')[-1]}", "values": grid,
-                              "text": [[str(v) for v in row] for row in grid]})
+                              "text": [[shown(c) for c in row] for row in ws.iter_rows()]})
         raise AssertionError(u)

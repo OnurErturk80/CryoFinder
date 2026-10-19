@@ -85,6 +85,21 @@ td.rn{background:var(--surface2);color:var(--mut);position:sticky;left:0;text-al
 .dot.empty{border-style:dashed;opacity:.7}.dot.cm{background:#3b82f6;border-color:#1d4ed8;color:#fff}.dot.cs{background:#facc15;border-color:#a16207}
 .dot.cy{background:#22c55e;border-color:#15803d}.dot.ct{background:#f97316;border-color:#c2410c}.dot.rapidi{background:#e5e7eb;border-color:#6b7280}.dot.other{background:#6b7280;border-color:#374151;color:#fff}
 .dot.hit{outline:3px solid #ef4444;outline-offset:1px}.dot.sel{box-shadow:0 0 0 3px var(--acc)}.legend .dot{cursor:default}
+/* öneri kartları */
+.plan{border:1px solid var(--line);border-radius:12px;padding:12px;margin-bottom:12px;background:var(--surface2)}
+.plan.chosen{border-color:var(--acc);box-shadow:0 0 0 2px var(--acc)}
+.plan-head{display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;margin-bottom:6px}.plan-head span{color:var(--mut);font-size:13px}
+.place{padding:10px 0;border-top:1px solid var(--line)}.place:first-of-type{border-top:0}.place .t{font-weight:650}.place .sh{color:var(--mut);font-size:12.5px}
+.strip{display:flex;gap:6px;margin:8px 0;flex-wrap:wrap}
+.slot{width:34px;height:44px;border-radius:6px 6px 10px 10px;display:flex;align-items:flex-end;justify-content:center;padding-bottom:3px;font-size:12px;font-weight:700;color:#fff;border:1px solid transparent}
+.slot.old{opacity:.5}.slot.empty{background:transparent;border:1.5px dashed var(--mut);color:var(--mut)}.slot.new{outline:3px solid var(--fg);outline-offset:1px;opacity:1}
+.slot.cm{background:#3b82f6}.slot.cs{background:#facc15;color:#3b2f00}.slot.cy{background:#22c55e}.slot.ct{background:#f97316}
+.slot.rapid{background:repeating-linear-gradient(135deg,#8a97a7 0 4px,#a9b4c1 4px 8px)}.slot.unk{background:var(--line);color:var(--fg)}
+.lines{margin:6px 0;padding:0;list-style:none;font-size:14px}.lines li{padding:2px 0;word-break:break-word}.why{color:var(--mut);font-size:13px;margin-top:6px}
+.chipset{display:flex;gap:8px;flex-wrap:wrap}.chipset label{display:flex;align-items:center;gap:8px;padding:8px 12px;border:1px solid var(--line);border-radius:10px;background:var(--surface);cursor:pointer}
+.chipset label:has(input:checked){border-color:var(--acc);background:var(--acc-soft)}.chipset small{color:var(--mut)}
+.srow{display:grid;grid-template-columns:150px minmax(0,1fr) auto;gap:8px;align-items:end;margin-bottom:8px}
+.itemrow{display:grid;grid-template-columns:minmax(0,1.2fr) 150px minmax(0,1.4fr);gap:10px;align-items:end;padding:10px 12px;border:1px solid var(--line);border-radius:12px;background:var(--surface2);margin-bottom:8px}
 pre{white-space:pre-wrap;font-size:11.5px;color:var(--mut);max-height:200px;overflow:auto;margin:8px 0 0}details summary{cursor:pointer;font-weight:600}
 
 /* pencere ve bildirimler */
@@ -108,7 +123,7 @@ dialog .actions{display:flex;gap:10px;justify-content:flex-end;margin-top:16px}
  .card{padding:14px;border-radius:12px}.row>.field{flex:1 1 calc(50% - 10px)}.row>.grow{flex:1 1 100%}.row .btn{flex:1 1 auto}
  .tiles{grid-template-columns:repeat(3,1fr);gap:8px}.tile{padding:8px 10px}.tile b{font-size:19px}.tile span{font-size:11px}.tile .dot,.legend .dot{width:13px;height:13px;min-height:0}
  .legend{gap:8px 12px;font-size:12px}
- .straw{grid-template-columns:1fr 1fr}.straw>.field:first-child{grid-column:1/-1}.change{grid-template-columns:1fr}.change .o{display:none}
+ .straw{grid-template-columns:1fr 1fr}.straw>.field:first-child{grid-column:1/-1}.srow{grid-template-columns:1fr auto}.srow .field:first-child{grid-column:1/-1}.itemrow{grid-template-columns:1fr 1fr}.itemrow>div:first-child{grid-column:1/-1}.change{grid-template-columns:1fr}.change .o{display:none}
  .btn{min-height:46px}input,select,textarea{font-size:16px;min-height:46px}
  .can{width:min(84vw,280px)}.dot{width:22px;height:22px;line-height:18px;font-size:10px}.lh span,.lv{width:106px}.lh{padding-left:36px}
  #toasts{left:12px;right:12px;bottom:calc(var(--nav-h) + 12px + env(safe-area-inset-bottom))}
@@ -141,6 +156,7 @@ dialog .actions{display:flex;gap:10px;justify-content:flex-end;margin-top:16px}
     <div class="row">
       <label class="field" style="max-width:200px"><span>Tank</span><select id="vTank"></select></label>
       <label class="field grow"><span>Hasta ara (soyad/ad) — haritada işaretlenir</span><input id="vq" placeholder="örn. yılmaz" enterkeyhint="search"></label>
+      <label class="field"><span>Tarih (isteğe bağlı)</span><input id="vdate" type="date"></label>
       <button class="btn primary" id="vFind">Ara</button><button class="btn" id="vRefresh">Yenile</button>
     </div>
     <div class="mut" id="vInfo" style="margin-top:8px"></div>
@@ -155,31 +171,37 @@ dialog .actions{display:flex;gap:10px;justify-content:flex-end;margin-top:16px}
 
 <!-- Yeni hasta -->
 <section id="v-reg" hidden class="steps">
-  <div class="card step"><h3>Yer öner</h3>
+  <div class="card step"><h3>Hasta ve örnek</h3>
     <div class="row">
-      <label class="field"><span>Tank</span><select id="rTank"></select></label>
-      <label class="field"><span>Straw sayısı</span><input id="rN" type="number" inputmode="numeric" min="1" max="12" value="2"></label>
-      <label class="field"><span>Tür</span><select id="rType"></select></label>
-      <label class="field"><span>Kat</span><select id="rKat"><option value="otomatik">Otomatik (önce alt)</option><option value="alt">Yalnız alt</option><option value="ust">Yalnız üst</option></select></label>
-      <button class="btn primary" id="rSuggest">Yer öner</button>
-    </div>
-    <div class="list" id="rPlans" style="margin-top:12px"></div>
-  </div>
-  <div class="card step" id="rStep2" hidden><h3>Straw renkleri ve hasta bilgileri</h3>
-    <div id="rStraws"></div>
-    <div class="row" style="margin-top:10px">
-      <label class="field grow"><span>Soyad</span><input id="pSoyad" autocomplete="off"></label>
-      <label class="field grow"><span>Ad</span><input id="pAd" autocomplete="off"></label>
-      <label class="field grow"><span>Eşi (isteğe bağlı)</span><input id="pEsi" autocomplete="off"></label>
+      <label class="field grow"><span>Soyad</span><input id="pSoyad" autocomplete="off" autocapitalize="characters"></label>
+      <label class="field grow"><span>Ad</span><input id="pAd" autocomplete="off" autocapitalize="characters"></label>
+      <label class="field grow"><span>Eşi (isteğe bağlı)</span><input id="pEsi" autocomplete="off" autocapitalize="characters"></label>
       <label class="field"><span>Tarih</span><input id="pDate" type="date"></label>
-      <button class="btn primary" id="rPreview">Önizle</button>
     </div>
+    <div class="field" style="margin-top:12px"><span>Örnek türü</span>
+      <div class="chipset"><label><input type="radio" name="stype" value="embryo" checked>Embriyo / oosit</label><label><input type="radio" name="stype" value="sperm">Sperm</label></div></div>
+    <div class="field" style="margin-top:12px"><span>Hangi tanka yerleşsin?</span><div class="chipset" id="rTanks"></div></div>
+    <div id="rEmbryo" style="margin-top:12px"><div class="field"><span>Straw'lar</span></div><div id="rStraws"></div>
+      <button class="btn" id="rAdd" type="button">Straw ekle</button></div>
+    <div id="rSperm" hidden class="row" style="margin-top:12px">
+      <label class="field grow"><span>Hücre</span><input id="spHucre" value="EJAKÜLAT-CA" autocomplete="off" autocapitalize="characters"></label>
+      <label class="field"><span>Vial sayısı</span><input id="spN" type="number" min="1" max="20" value="1" inputmode="numeric"></label>
+      <label class="field grow"><span>Vial notu (isteğe bağlı)</span><input id="spNote" autocomplete="off" placeholder="ör. (100 MİLYON)"></label></div>
+    <div class="row" style="margin-top:14px"><button class="btn primary" id="rSuggest">Yer öner</button></div>
     <div id="rErr"></div>
   </div>
-  <div class="card step" id="rStep3" hidden><h3>Onay</h3>
-    <div class="changes" id="rChanges"></div>
-    <p class="mut">Onaylarsanız önce OneDrive'daki <b>Yedekler</b> klasörüne yedek alınır, sonra yukarıdaki hücreler yazılır.</p>
-    <div class="row"><button class="btn primary" id="rApply">Onayla ve yaz</button><button class="btn" id="rCancel">Vazgeç</button></div>
+  <div class="card step" id="rStep2" hidden><h3>Öneriler</h3>
+    <div class="legend"><span><span class="slot old cm" style="width:14px;height:18px"></span>dolu</span><span><span class="slot empty" style="width:14px;height:18px"></span>boş</span><span><span class="slot new cm" style="width:14px;height:18px"></span>yeni straw</span></div>
+    <div id="rPlans"></div>
+  </div>
+  <div class="card step" id="rStep3" hidden><h3>Renkler ve onay</h3>
+    <div id="rItems"></div>
+    <div class="row"><button class="btn primary" id="rPreview">Önizle</button></div>
+    <div id="rPrevBox" hidden>
+      <div class="changes" id="rChanges" style="margin-top:12px"></div>
+      <p class="mut">Onaylarsanız önce OneDrive'daki <b>Yedekler</b> klasörüne yedek alınır, sonra yukarıdaki hücreler yazılır.</p>
+      <div class="row"><button class="btn primary" id="rApply">Onayla ve yaz</button><button class="btn" id="rCancel">Vazgeç</button></div>
+    </div>
     <div id="rMsg"></div>
   </div>
 </section>
@@ -188,7 +210,8 @@ dialog .actions{display:flex;gap:10px;justify-content:flex-end;margin-top:16px}
 <section id="v-rem" hidden>
   <div class="card"><h3>Hasta çıkar</h3>
     <p class="mut" style="margin-top:-4px">Satırın hücrelerini temizler; dosya, satır ve <b>NO</b> etiketi silinmez.</p>
-    <div class="row"><label class="field grow"><span>Soyad veya ad</span><input id="xq" placeholder="en az 2 harf" enterkeyhint="search"></label><button class="btn primary" id="xSearch">Ara</button></div>
+    <div class="row"><label class="field grow"><span>Soyad veya ad</span><input id="xq" placeholder="en az 2 harf" enterkeyhint="search"></label>
+      <label class="field"><span>Tarih (isteğe bağlı)</span><input id="xdate" type="date"></label><button class="btn primary" id="xSearch">Ara</button></div>
     <div class="mut" id="xInfo" style="margin:8px 0"></div>
     <div class="list" id="xHits"></div>
     <div class="row" style="margin-top:12px"><button class="btn" id="xPreview">Seçilenleri önizle</button></div>
@@ -281,7 +304,7 @@ function dotEl(s){const d=h("button",{class:"dot "+(s.state==="color"?CCLS[s.col
 function legend(){const L=$("vLegend");L.textContent="";[["empty","Boş"],["cm","Mavi"],["cs","Sarı"],["cy","Yeşil"],["ct","Turuncu"],["rapidi","Rapidi (renksiz)"],["other","Dolu, renk okunamadı"]]
   .forEach(([c,t])=>L.append(h("span",{},h("span",{class:"dot "+c}),t)));}
 async function vizInit(){legend();const o=await api("/api/reg/options");const t=$("vTank");const keep=t.value;t.textContent="";
-  (o.all_tanks||o.tanks).forEach(n=>t.add(new Option("Tank "+n,n)));if(keep)t.value=keep;await loadViz();}
+  o.map_tanks.forEach(x=>t.add(new Option(x.label,x.id)));if(keep)t.value=keep;await loadViz();}
 function tile(label,val,cls){return h("div",{class:"tile"},h("b",{},val),h("span",{},cls?h("span",{class:"dot "+cls,style:"cursor:default"}):null,label));}
 async function loadViz(){$("vDetail").hidden=true;const m=await api("/api/map?tank="+$("vTank").value);const box=$("vizCans");box.textContent="";const T=$("vTiles");T.textContent="";
   if(!m.ok){box.append(h("div",{class:"mut"},m.message));return;}const st=m.stats;
@@ -290,7 +313,7 @@ async function loadViz(){$("vDetail").hidden=true;const m=await api("/api/map?ta
   m.canisters.forEach(c=>{const cd=h("div",{class:"can"},h("h4",{},"Canister "+c.canister),h("div",{class:"lh"},h("span",{},m.has_ust?"üst":""),h("span",{},"alt")));
     const odd=g=>[g.alt,g.ust].some(x=>x&&x.odd);
     if(c.note)cd.append(h("div",{class:"cnote"},c.note));
-    c.goblets.forEach(g=>{const row=h("div",{class:"gob"+(odd(g)?" odd":""),title:odd(g)?"Standart dışı goblet (satır sayısı 4 değil)":""},h("span",{class:"gn"},g.n));
+    c.goblets.forEach(g=>{const row=h("div",{class:"gob"+(odd(g)?" odd":""),title:odd(g)?"Standart dışı goblet (satır sayısı 4 değil)":""},h("span",{class:"gn"},g.special?g.label:g.n));
       [["ust",m.has_ust],["alt",true]].forEach(([k,on])=>{if(!on)return;const lv=h("span",{class:"lv"});
         if(g[k])g[k].slots.forEach(s=>lv.append(dotEl(s)));else lv.append(h("span",{class:"none"},"—"));row.append(lv);});cd.append(row);});
     if(c.loose.length){const lb=h("div",{class:"loose"},h("h5",{},"Etiketsiz / farklı düzendeki kayıtlar ("+c.loose.reduce((a,g)=>a+g.slots.length,0)+")"));
@@ -305,49 +328,73 @@ async function slotClick(id,el){document.querySelectorAll(".dot.sel").forEach(x=
   d.scrollIntoView({behavior:"smooth",block:"nearest"});}
 $("vTank").onchange=loadViz;$("vRefresh").onclick=()=>busy($("vRefresh"),loadViz);
 $("vFind").onclick=()=>busy($("vFind"),async()=>{document.querySelectorAll(".dot.hit").forEach(x=>x.classList.remove("hit"));$("vInfo").textContent="";
-  const r=await api("/api/map/find",{q:$("vq").value,tank:+$("vTank").value});if(!r.ok){$("vInfo").textContent=r.message;return;}
+  const r=await api("/api/map/find",{q:$("vq").value,tank:+$("vTank").value,date:$("vdate").value||null});if(!r.ok){$("vInfo").textContent=r.message;return;}
   let first=null;r.hits.forEach(x=>{const el=document.querySelector(`.dot[data-id="${CSS.escape(x.id)}"]`);if(el){el.classList.add("hit");first=first||el;}});
   $("vInfo").textContent=r.hits.length?`${r.hits.length} straw: `+r.hits.slice(0,6).map(x=>x.where).join(" | "):"Bu tankta eşleşme yok.";
   if(first)first.scrollIntoView({block:"center",inline:"center",behavior:"smooth"});});
 $("vq").onkeydown=e=>{if(e.key==="Enter")$("vFind").click();};
 
 /* ---- Yeni hasta */
-let R={plans:[],plan:null,regId:null};
-async function regInit(){const o=await api("/api/reg/options");const t=$("rTank");const keep=t.value;t.textContent="";
-  o.tanks.forEach(n=>t.add(new Option(`Tank ${n} (${o.free_rows[n]} boş satır)`,n)));if(keep)t.value=keep;
-  const ty=$("rType");if(!ty.options.length)o.types.forEach(x=>ty.add(new Option(x,x)));
+let R={plans:[],plan:null,regId:null,opts:null};
+const DEVNAME={CRYOLOCK:"Cryolock","VİTRİFİT":"Vitrifit",CRYOTOP:"Cryotop",RAPIDI:"Rapid-i"};
+function sampleType(){return (document.querySelector('input[name="stype"]:checked')||{}).value||"embryo";}
+function invalidate(){R.plan=null;R.regId=null;["rStep2","rStep3"].forEach(i=>$(i).hidden=true);$("rPrevBox").hidden=true;}
+function addStraw(device,hucre){const sel=h("select",{"aria-label":"Straw türü",onchange:invalidate},(R.opts?R.opts.devices:Object.keys(DEVNAME)).map(d=>h("option",{value:d},DEVNAME[d]||d)));sel.value=device;
+  const inp=h("input",{placeholder:"örn. D5 (4AA)",autocomplete:"off",oninput:invalidate});inp.value=hucre||"";
+  const row=h("div",{class:"srow"},h("label",{class:"field"},h("span",{},"Tür"),sel),h("label",{class:"field"},h("span",{},"HÜCRE"),inp),
+    h("button",{class:"btn ghost",type:"button",onclick:()=>{if($("rStraws").children.length>1){row.remove();invalidate();}}},"Sil"));$("rStraws").append(row);}
+async function regInit(){const o=await api("/api/reg/options");R.opts=o;const box=$("rTanks");const had={};box.querySelectorAll("input").forEach(i=>had[i.dataset.tank]=i.checked);box.textContent="";
+  o.tanks.forEach(t=>{const cb=h("input",{type:"checkbox","data-tank":t.id,onchange:invalidate});cb.checked=(String(t.id) in had)?had[t.id]:true;
+    box.append(h("label",{},cb,t.label,h("small",{},t.free+" boş yer")));});
+  if(!$("rStraws").children.length)addStraw("CRYOLOCK","");
   if(!$("pDate").value){const d=new Date();$("pDate").value=d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0");}}
-function planText(pl){return pl.placements.map(p=>`Canister ${p.canister} · ${p.label} (${p.kat}) · satır ${p.rows[0]}${p.rows.length>1?"–"+p.rows[p.rows.length-1]:""}`).join("  →  ");}
-$("rSuggest").onclick=()=>busy($("rSuggest"),async()=>{$("rStep2").hidden=true;$("rStep3").hidden=true;const box=$("rPlans");box.textContent="";
-  const r=await api("/api/reg/suggest",{tank:+$("rTank").value,n:+$("rN").value,kat:$("rKat").value});
-  if(!r.ok||!r.plans.length){box.append(h("div",{class:"alert info"},r.message||"Uygun yer bulunamadı."));return;}R.plans=r.plans;
-  r.plans.forEach((pl,i)=>{const rb=h("input",{type:"radio",name:"plan",onclick:()=>pickPlan(pl)});
-    const colors=pl.placements.map(p=>p.colors.join(" · ")).join("  /  ");
-    box.append(h("label",{class:"item pick"},rb,h("div",{class:"grow"},h("b",{},`${i+1}. ${planText(pl)}`),h("div",{class:"sub"},"Renkler: "+colors))));});});
-function pickPlan(pl){R.plan=pl;$("rStep3").hidden=true;$("rStep2").hidden=false;const box=$("rStraws");box.textContent="";const ins=[];
-  pl.placements.forEach((p,pi)=>p.rows.forEach((row,ri)=>{const sel=h("select",{"data-p":pi},p.free_colors.map(c=>h("option",{value:c},c)));sel.value=p.colors[ri];
-    const inp=h("input",{placeholder:"örn. D5 (4AA)",autocomplete:"off"});ins.push(inp);
-    box.append(h("div",{class:"straw"},h("div",{},h("b",{},`Canister ${p.canister} · ${p.label} (${p.kat})`),h("div",{class:"sub"},"satır "+row)),
-      h("label",{class:"field"},h("span",{},"Renk"),sel),h("label",{class:"field"},h("span",{},"HÜCRE"),inp)));}));
+document.querySelectorAll('input[name="stype"]').forEach(r=>r.onchange=()=>{const sp=sampleType()==="sperm";$("rEmbryo").hidden=sp;$("rSperm").hidden=!sp;invalidate();});
+["pSoyad","pAd","pEsi","pDate","spHucre","spN","spNote"].forEach(i=>$(i).oninput=invalidate);
+$("rAdd").onclick=()=>{const last=$("rStraws").lastElementChild;addStraw(last?last.querySelector("select").value:"CRYOLOCK",last?last.querySelector("input").value:"");invalidate();};
+function slotEl(s){const c=s.state==="empty"?"empty":(s.state==="new"?"new ":"old ")+(s.device==="RAPIDI"?"rapid":(CCLS[s.color]||"unk"));return h("div",{class:"slot "+c,title:s.state==="empty"?"boş":""},s.pos);}
+function vialText(dev,color,pos){return dev==="RAPIDI"?"1 RAPIDI "+pos:"1 "+dev+(color||"")+" "+pos;}
+$("rSuggest").onclick=()=>busy($("rSuggest"),async()=>{alertBox($("rErr"),"");invalidate();const box=$("rPlans");box.textContent="";
+  const sample=sampleType(),tanks=[...$("rTanks").querySelectorAll("input:checked")].map(i=>+i.dataset.tank);
+  const body={sample,tanks,patient:{soyad:$("pSoyad").value,ad:$("pAd").value,esi:$("pEsi").value,tarih:$("pDate").value},
+    straws:[...$("rStraws").children].map(r=>({device:r.querySelector("select").value,hucre:r.querySelector("input").value})),
+    sperm:{hucre:$("spHucre").value,vials:+$("spN").value,note:$("spNote").value}};
+  const r=await api("/api/reg/suggest",body);if(!r.ok){alertBox($("rErr"),r.message,"bad");return;}
+  if(!r.plans.length){alertBox($("rErr"),r.message,"bad");return;}R.plans=r.plans;$("rStep2").hidden=false;
+  r.plans.forEach((pl,i)=>{const n=pl.placements.reduce((a,x)=>a+x.items.length,0);
+    const card=h("article",{class:"plan"},h("div",{class:"plan-head"},h("b",{},(i+1)+". öneri"),h("span",{},(pl.placements.length===1?"Tek grupta":pl.placements.length+" gruba bölünür")+" · "+n+(sample==="sperm"?" satır":" straw"))));
+    pl.placements.forEach(p=>card.append(h("div",{class:"place"},h("div",{class:"t"},p.title),h("div",{class:"sh"},p.sheet+" sayfası"),h("div",{class:"strip"},p.slots.map(slotEl)),
+      h("ul",{class:"lines"},p.items.map(it=>h("li",{},"Satır "+it.row+" → ",h("b",{},it.vial),it.hucre?" · "+it.hucre:""))),h("div",{class:"why"},p.why.join(". ")+"."))));
+    if(pl.warnings.length)card.append(h("div",{class:"alert info"},pl.warnings.join(" ")));
+    card.append(h("div",{class:"row",style:"margin-top:10px"},h("button",{class:"btn "+(R.plan===pl?"primary":""),type:"button",onclick:()=>pickPlan(pl,card)},"Bu öneriyi seç")));box.append(card);});
+  $("rStep2").scrollIntoView({behavior:"smooth",block:"start"});});
+function pickPlan(pl,card){R.plan=pl;R.regId=null;$("rPrevBox").hidden=true;alertBox($("rMsg"),"");
+  document.querySelectorAll("#rPlans .plan").forEach(x=>x.classList.remove("chosen"));card.classList.add("chosen");
+  const box=$("rItems");box.textContent="";const embryo=sampleType()==="embryo";const ins=[];
+  pl.placements.forEach(p=>p.items.forEach(it=>{
+    const vial=h("b",{},it.vial);let sel=null;
+    if(embryo&&it.device!=="RAPIDI"){sel=h("select",{onchange:()=>{vial.textContent=vialText(it.device,sel.value,it.pos);}},p.free_colors.map(c=>h("option",{value:c},c)));sel.value=it.color;}
+    const inp=h("input",{placeholder:"örn. D5 (4AA)",autocomplete:"off"});inp.value=it.hucre||"";ins.push(inp);
+    box.append(h("div",{class:"itemrow","data-color":sel?"1":"0"},h("div",{},h("b",{},p.title),h("div",{class:"sub"},"satır "+it.row+" · "+(DEVNAME[it.device]||"Sperm")+" · VİAL: "),vial),
+      sel?h("label",{class:"field"},h("span",{},"Renk"),sel):h("div",{class:"sub"},it.device==="RAPIDI"?"renksiz":"—"),h("label",{class:"field"},h("span",{},"HÜCRE"),inp)));}));
   ins.forEach((i,k)=>i.oninput=()=>{if(k>0)i.dataset.touched="1";else ins.slice(1).forEach(o=>{if(!o.dataset.touched)o.value=ins[0].value;});});
-  $("rStep2").scrollIntoView({behavior:"smooth",block:"start"});}
-function changesTable(el,list,after){el.textContent="";list.forEach(c=>el.append(h("div",{class:"change"},h("span",{class:"w"},c.where),h("span",{class:"o"},c.old||"(boş)"),h("span",{class:"n"},c.new===""?"(boş)":c.new))));}
-$("rPreview").onclick=()=>busy($("rPreview"),async()=>{alertBox($("rErr"),"");alertBox($("rMsg"),"");
-  const straws=[...$("rStraws").querySelectorAll(".straw")].map(d=>({color:d.querySelector("select").value,hucre:d.querySelector("input").value}));
-  const r=await api("/api/reg/preview",{plan_id:R.plan.id,straw_type:$("rType").value,straws,patient:{soyad:$("pSoyad").value,ad:$("pAd").value,esi:$("pEsi").value,tarih:$("pDate").value}});
-  if(!r.ok){$("rStep3").hidden=true;alertBox($("rErr"),r.message,"bad");return;}R.regId=r.id;changesTable($("rChanges"),r.changes);$("rStep3").hidden=false;$("rStep3").scrollIntoView({behavior:"smooth",block:"start"});});
+  $("rStep3").hidden=false;$("rStep3").scrollIntoView({behavior:"smooth",block:"start"});}
+function changesTable(el,list){el.textContent="";list.forEach(c=>el.append(h("div",{class:"change"},h("span",{class:"w"},c.where),h("span",{class:"o"},c.old||"(boş)"),h("span",{class:"n"},c.new===""?"(boş)":c.new))));}
+$("rPreview").onclick=()=>busy($("rPreview"),async()=>{alertBox($("rMsg"),"");
+  const items=[...$("rItems").children].map(d=>({color:d.dataset.color==="1"?d.querySelector("select").value:null,hucre:d.querySelector("input").value}));
+  const r=await api("/api/reg/preview",{plan_id:R.plan.id,items});
+  if(!r.ok){$("rPrevBox").hidden=true;alertBox($("rMsg"),r.message,"bad");return;}R.regId=r.id;changesTable($("rChanges"),r.changes);$("rPrevBox").hidden=false;$("rPrevBox").scrollIntoView({behavior:"smooth",block:"nearest"});});
 $("rApply").onclick=()=>busy($("rApply"),async()=>{const r=await api("/api/reg/apply",{id:R.regId});alertBox($("rMsg"),r.message,r.ok?"ok":"bad");
-  if(r.ok){R.regId=null;toast("Kayıt yazıldı","ok");await state();$("rPlans").textContent="";$("rStep2").hidden=true;$("pSoyad").value=$("pAd").value=$("pEsi").value="";}logs();});
-$("rCancel").onclick=()=>{R.regId=null;$("rStep3").hidden=true;};
+  if(r.ok){R.regId=null;toast("Kayıt yazıldı","ok");await state();$("rPlans").textContent="";$("rStep2").hidden=true;$("rPrevBox").hidden=true;$("pSoyad").value=$("pAd").value=$("pEsi").value="";await regInit();}logs();});
+$("rCancel").onclick=()=>{R.regId=null;$("rPrevBox").hidden=true;};
 
 /* ---- Hasta çıkar */
 let X={regId:null};
 $("xSearch").onclick=()=>busy($("xSearch"),async()=>{alertBox($("xMsg"),"");$("xStep2").hidden=true;const t=$("xHits");t.textContent="";
-  const r=await api("/api/rem/search",{q:$("xq").value});if(!r.ok){$("xInfo").textContent=r.message;return;}
+  const r=await api("/api/rem/search",{q:$("xq").value,date:$("xdate").value||null});if(!r.ok){$("xInfo").textContent=r.message;return;}
   $("xInfo").textContent=r.hits.length?`${r.hits.length} satır bulundu${r.truncated?" (ilk 200)":""}. Temizlenecekleri işaretleyin.`:"Eşleşme yok.";
   r.hits.forEach(x=>{const cb=h("input",{type:"checkbox","data-sheet":x.sheet,"data-row":x.row,"data-col":x.col});
     t.append(h("label",{class:"item pick"},cb,h("div",{class:"grow"},h("b",{},`${x.soyad} ${x.ad}`+(x.esi?` · eşi ${x.esi}`:"")),
-      h("div",{class:"sub"},`Tank ${x.tank||"?"} · Canister ${x.canister||"?"} · ${x.label} (${x.kat}) · satır ${x.row}`),h("div",{class:"sub"},`${x.vial||"-"} · ${x.hucre||"-"} · ${x.tarih||"-"}`))));});});
+      h("div",{class:"sub"},`${x.tank_label} · Canister ${x.canister||"?"} · ${x.label} (${x.kat}) · satır ${x.row}`),h("div",{class:"sub"},`${x.vial||"-"} · ${x.hucre||"-"} · ${x.tarih||"-"}`))));});});
 $("xq").onkeydown=e=>{if(e.key==="Enter")$("xSearch").click();};
 $("xPreview").onclick=()=>busy($("xPreview"),async()=>{alertBox($("xMsg"),"");const items=[...$("xHits").querySelectorAll("input:checked")].map(c=>({sheet:c.dataset.sheet,row:+c.dataset.row,col:+c.dataset.col}));
   const r=await api("/api/rem/preview",{items});if(!r.ok){$("xStep2").hidden=true;toast(r.message,"bad");return;}X.regId=r.id;changesTable($("xChanges"),r.changes);$("xStep2").hidden=false;$("xStep2").scrollIntoView({behavior:"smooth",block:"start"});});

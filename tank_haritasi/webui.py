@@ -98,10 +98,9 @@ def make_server(service: EditService, log_path, port: int = 0) -> tuple[Threadin
                 elif url.path == "/api/apply":
                     self._json(service.apply(body["id"]))
                 elif url.path == "/api/reg/suggest":
-                    self._json(service.reg_suggest(int(body["tank"]), int(body["n"]), str(body.get("kat", "otomatik"))))
+                    self._json(service.reg_suggest(dict(body)))
                 elif url.path == "/api/reg/preview":
-                    self._json(service.reg_preview(str(body["plan_id"]), str(body["straw_type"]),
-                                                   list(body["straws"]), dict(body["patient"])))
+                    self._json(service.reg_preview(str(body["plan_id"]), list(body["items"])))
                 elif url.path == "/api/reg/apply":
                     self._json(service.reg_apply(str(body["id"])))
                 elif url.path == "/api/shutdown":
@@ -110,9 +109,9 @@ def make_server(service: EditService, log_path, port: int = 0) -> tuple[Threadin
                 elif url.path == "/api/map/slot":
                     self._json(service.map_slot(str(body["id"])))
                 elif url.path == "/api/map/find":
-                    self._json(service.map_find(str(body.get("q", "")), body.get("tank")))
+                    self._json(service.map_find(str(body.get("q", "")), body.get("tank"), body.get("date")))
                 elif url.path == "/api/rem/search":
-                    self._json(service.rem_search(str(body.get("q", ""))))
+                    self._json(service.rem_search(str(body.get("q", "")), body.get("date")))
                 elif url.path == "/api/rem/preview":
                     self._json(service.rem_preview(list(body["items"])))
                 elif url.path == "/api/rem/apply":

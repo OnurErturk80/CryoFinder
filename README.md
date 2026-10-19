@@ -49,13 +49,22 @@ Güvenlik: oturum anahtarı, Host/Origin denetimi, yalnızca JSON POST; diğer w
 Hücreler Excel'de göründüğü biçimde (tarihler dahil) gösterilir.
 
 ## Yeni hasta kaydı (arayüzde "Yeni hasta" sekmesi)
-Tank, straw sayısı, tür (VİTRİFİT/CRYOLOCK/CRYOTOP) ve kat seçilir; program uygun konumları önerir (alt kat önce).
-Bir konumun 4 satırında renkler (MAVİ, SARI, YEŞİL, TURUNCU) farklıdır; aynı hastanın straw'ları aynı goblette bitişik
-satırlara, sığmazsa komşu gobletlere yerleşir. Renkler seçilebilir; VİAL `1 CRYOLOCKSARI` biçiminde yazılır. Tüm hücre
-değişiklikleri önizlenir ve tek **Onayla** ile (önce yedek) yazılır. Yazmadan hemen önce hedef hücrelerin hâlâ boş olduğu
-yeniden denetlenir. Kat sayfadan belirlenir (adında "üst" geçen sayfa = üst kat). Standart olmayan (4 satırlık olmayan)
-konumlar, TANK 4 ve küçük tank şimdilik desteklenmez. `python3 -m tank_haritasi yerler --detay` haritanın nasıl
-algılandığını (kişi adı göstermeden) özetler.
+Mevcut kullanılan araçtaki ("Tank haritası · yer önerisi") kuralların aynısı:
+- Hasta bilgileri (soyad, ad, eşi, tarih), örnek türü (**embriyo/oosit** ya da **sperm**), hangi tanklar, straw'lar tek tek
+  (Cryolock / Vitrifit / Cryotop / Rapid-i + HÜCRE; HÜCRE boş bırakılabilir). Sperm için hücre, vial sayısı, not.
+- **En fazla 3 öneri**, her biri gerekçeli ve goblet şeridiyle: aynı hastanın straw'ları aynı bölümde (+50), aynı gobletin
+  diğer katında (+20), aynı canister'da (+8); yarı dolu bölüm önce doldurulur (yeni bölüm açılmaz), tam dolduran seçenek +10;
+  birden fazla bölüme bölünen plan her ek bölüm için −60.
+- **Renk gobletteki sıraya göre:** 1. sıra MAVİ, 2. SARI, 3. TURUNCU, 4. YEŞİL; kullanılmışsa sıradaki boş renk. Aynı bölümde renk
+  tekrarlanmaz (bu araç tekrara hiç izin vermez). Renk önerilen değerle gelir, onay adımında değiştirilebilir.
+- **VİAL biçimi:** `1 CRYOLOCKSARI 2`, `1 VİTRİFİTMAVİ 1`; rapidi `1 RAPIDI 3` (sondaki sayı gobletteki sıra).
+  Rapidi renksizdir ve rapidi ile renkli straw aynı bölümde karışmaz. Sperm: harf satırında tüm vial'ler tek satıra (`3 (100 MİLYON)`).
+- **Okunan düzenler:** Tank 1 / 2 / 5 (alt ve üst kat), **Tank 4** (harf + Ü/A), **Yeni sperm**, **Sayfa1 (eski sperm)** ve
+  **küçük tank** (HARF bloğu). Dolu sayılma: soyad, ad, eşi, tarih, HÜCRE ya da VİAL'den biri doluysa.
+- Tüm hücre değişiklikleri önizlenir ve tek **Onayla** ile (önce yedek) yazılır. Yazmadan hemen önce hedef hücrelerin
+  boş olduğu yeniden denetlenir. Tarih Excel'de gerçek tarih olarak, komşu tarih hücresinin biçimiyle yazılır.
+- Hasta aramada (Tank haritası ve Hasta çıkar): tüm kelimeler soyad+ad+eşi içinde geçmeli; isteğe bağlı tarih.
+`yerler --straw N --tur CRYOLOCK` komut satırında aynı planlayıcıyı çalıştırır.
 
 ## Hasta çıkarma (arayüzde "Hasta çıkar" sekmesi)
 Soyad/ad ile arama → temizlenecek straw satırlarını işaretleme → önizleme (eski değerler, yeni = boş) → onay. Yalnızca
